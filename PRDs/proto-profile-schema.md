@@ -24,7 +24,7 @@ Defines the structure collected during onboarding plus placeholders for the full
   - predictable_spontaneous (number): 0 = Predictable, 100 = Spontaneous
   - grounded_imaginative (number): 0 = Grounded, 100 = Imaginative
 
-## Base Identity Schema Placeholders (from `schema/base-profile-schema.md`)
+## Base Identity Schema Placeholders (from `base-profile-schema.md`)
 
 Proto profiles include the following sections with null/empty values to be hydrated into a full digital profile later.
 
