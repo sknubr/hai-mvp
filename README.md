@@ -62,9 +62,14 @@ gates entry; the per-user daily cap protects the shared key.
 1. Push this repo to GitHub.
 2. Render → New → **Blueprint** → select the repo (uses `render.yaml`).
 3. Set secrets in the dashboard: `GOOGLE_API_KEY`, `HAI_ACCESS_CODE`.
-4. Deploy. The 1 GB disk at `/app/data` persists state across redeploys.
-   > A persistent disk requires a paid instance (Starter). Without a disk, per-user
-   > state resets on every redeploy.
+4. Deploy.
+
+**Persistence switch (in `render.yaml`):**
+- **Default = free tier, no disk.** Per-user state is ephemeral — it resets on every
+  redeploy/restart, and the instance sleeps after ~15 min idle. Good for solo testing.
+- **For the real tester round**, turn on persistence: set `plan: starter`, uncomment the
+  `disk:` block, push (or re-sync the Blueprint). State at `/app/data` then survives
+  redeploys. (Disks require a paid instance.)
 
 **Any Docker host (Fly.io, etc.):** build the `Dockerfile`, mount a volume at
 `/app/data`, and set the same env vars. Run command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.

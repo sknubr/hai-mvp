@@ -1,16 +1,27 @@
 # Render deploy blueprint. Render → New → Blueprint → point at this repo.
-# A persistent disk is required so per-user state survives redeploys
-# (disks need a paid instance type — Starter is fine for a small preview).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# PERSISTENCE SWITCH
+# Currently: FREE tier, NO disk. Per-user state (chats, memories, feedback) lives
+# in an ephemeral filesystem — it RESETS on every redeploy/restart, and the free
+# instance sleeps after ~15 min idle (first request then takes ~30-60s to wake).
+# Fine for solo testing across machines.
+#
+# To turn ON persistence for the real tester round:
+#   1. change `plan: free`  →  `plan: starter`
+#   2. uncomment the `disk:` block below
+#   3. commit + push (or re-sync the Blueprint in the Render dashboard)
+# ─────────────────────────────────────────────────────────────────────────────
 services:
   - type: web
     name: hai-preview
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /gate/required
-    disk:
-      name: hai-data
-      mountPath: /app/data
-      sizeGB: 1
+    # disk:                       # ← uncomment (with plan: starter) for persistence
+    #   name: hai-data
+    #   mountPath: /app/data
+    #   sizeGB: 1
     envVars:
       - key: GOOGLE_API_KEY
         sync: false          # set in the Render dashboard (secret)
