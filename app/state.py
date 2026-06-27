@@ -22,7 +22,8 @@ from app.models import (
     ThreadItem,
 )
 
-PROFILES_DIR = Path(__file__).parent.parent / "profiles"
+PROFILES_DIR = Path(__file__).parent.parent / "profiles"            # built-in, committed, read-only
+GENERATED_DIR = Path(__file__).parent.parent / "data" / "personas"  # user-generated (writable/persistent)
 STATE_DIR = Path(__file__).parent.parent / "data" / "state"
 SHORT_BUFFER_SIZE = 15
 EVENT_LOG_CAP = 40          # older episodic life rolls up into the journal
@@ -41,10 +42,32 @@ def load_profile(persona_id: str) -> DigitalProfile:
 
 def load_all_profiles() -> dict[str, DigitalProfile]:
     profiles: dict[str, DigitalProfile] = {}
-    for p in sorted(PROFILES_DIR.glob("digital-profile-*.json")):
-        profile = DigitalProfile.model_validate_json(p.read_text())
-        profiles[profile.profile_id] = profile
+    for d in (PROFILES_DIR, GENERATED_DIR):
+        if not d.exists():
+            continue
+        for p in sorted(d.glob("digital-profile-*.json")):
+            profile = DigitalProfile.model_validate_json(p.read_text())
+            profiles[profile.profile_id] = profile
     return profiles
+
+
+def next_profile_id(name: str, existing: dict[str, DigitalProfile]) -> str:
+    """digital-profile-{slug}+{NNN} with an incrementing, zero-padded id."""
+    max_id = 0
+    for pid in existing:
+        if "+" in pid:
+            try:
+                max_id = max(max_id, int(pid.rsplit("+", 1)[1]))
+            except ValueError:
+                pass
+    slug = "".join(c for c in name.lower() if c.isalnum()) or "persona"
+    return f"digital-profile-{slug}+{max_id + 1:03d}"
+
+
+def save_generated_profile(profile: DigitalProfile) -> None:
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    path = GENERATED_DIR / f"{profile.profile_id}.json"
+    path.write_text(profile.model_dump_json(indent=2))
 
 
 # ─── Runtime State (mutable, per-user) ───────────────────────────────────────

@@ -603,6 +603,57 @@
   .gate-btn:hover { opacity: 0.9; }
   .gate-error { font-size: 12px; color: #ff6b6b; min-height: 14px; }
 
+  /* ── Onboarding modal ── */
+  .onb-scrim {
+    display: none; position: fixed; inset: 0; z-index: 150;
+    background: rgba(0,0,0,0.6); align-items: center; justify-content: center;
+  }
+  .onb-scrim.show { display: flex; }
+  .onb-card {
+    width: 560px; max-width: 94vw; max-height: 90vh;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .onb-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    font-weight: 700; font-size: 15px; color: var(--accent); flex-shrink: 0;
+  }
+  .onb-body { overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 22px; }
+  .onb-foot {
+    border-top: 1px solid var(--border); padding: 14px 20px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .onb-error { font-size: 12px; color: #ff6b6b; }
+
+  .onb-q h3 { font-size: 14px; color: var(--text); margin-bottom: 3px; }
+  .onb-q .onb-hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+
+  .onb-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .onb-opt {
+    border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    border-radius: 10px; padding: 8px 12px; cursor: pointer; font-size: 13px;
+    transition: all 0.12s; text-align: left;
+  }
+  .onb-opt:hover { border-color: var(--accent); }
+  .onb-opt.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .onb-opt small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .onb-opt.sel small { color: var(--accent); opacity: 0.85; }
+
+  /* communication-style 2-way toggles */
+  .onb-pair { display: flex; flex-direction: column; gap: 10px; }
+  .onb-pair-row { display: flex; align-items: center; gap: 10px; }
+  .onb-pair-label { font-size: 12px; color: var(--muted); width: 92px; flex-shrink: 0; }
+  .onb-toggle { display: flex; gap: 6px; flex: 1; }
+  .onb-toggle .onb-opt { flex: 1; text-align: center; }
+
+  /* sliders */
+  .onb-slider { margin-bottom: 14px; }
+  .onb-slider-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .onb-slider input[type=range] { width: 100%; accent-color: var(--accent); }
+
+  .onb-spinner { font-size: 13px; color: var(--muted); }
+
   /* ── Scrollbars ── */
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -701,6 +752,21 @@
   </div>
 </div>
 
+<!-- Onboarding (create new persona) -->
+<div class="onb-scrim" id="onb-scrim">
+  <div class="onb-card">
+    <div class="onb-head">
+      <span>Create a new companion</span>
+      <button class="inner-close" onclick="closeOnboarding()">✕</button>
+    </div>
+    <div class="onb-body" id="onb-body"><!-- built by JS --></div>
+    <div class="onb-foot">
+      <div class="onb-error" id="onb-error"></div>
+      <button class="gate-btn" id="onb-submit" onclick="submitOnboarding()" style="margin:0">Create companion</button>
+    </div>
+  </div>
+</div>
+
 <script>
   let activePersonaId = null;
   let personas = [];
@@ -773,11 +839,12 @@
 
   function renderTabs() {
     const container = document.getElementById('persona-tabs');
-    if (!personas.length) { container.innerHTML = '<div class="empty" style="padding:0;font-size:13px;">No personas found. Run generate_profiles.py first.</div>'; return; }
-    container.innerHTML = personas.map(p => `
+    const tabs = personas.map(p => `
       <button class="tab ${p.profile_id === activePersonaId ? 'active' : ''}"
-              onclick="selectPersona('${p.profile_id}')">${p.name}</button>
+              onclick="selectPersona('${p.profile_id}')">${escHtml(p.name)}</button>
     `).join('');
+    const newBtn = `<button class="tab" title="Create a new companion" onclick="openOnboarding()">+ New</button>`;
+    container.innerHTML = tabs + newBtn;
   }
 
   async function selectPersona(personaId) {
@@ -1180,7 +1247,156 @@
     }
   }
 
+  // ── Onboarding (create persona) ───────────────────────────────────────────
+
+  // Question config — values must match the backend enums exactly.
+  const ONB = {
+    single: [
+      { key: 'gender', title: 'Gender', hint: 'Choose the gender of your companion.',
+        opts: [['Male'],['Female'],['You choose for me'],['Other']] },
+      { key: 'relationship_type', title: 'Relationship', hint: 'What kind of connection should you build together?',
+        opts: [['Romantic Interest','Something electric'],['Close Friend','Inside jokes & 3am talks'],
+               ['Mentor/Coach','Pushes you to grow'],['Daring Partner','Secrets & intrigue'],
+               ['Supportive Ally','Never face it alone']] },
+      { key: 'conversation_dynamic', title: 'Conversation dynamic', hint: 'Who takes the lead?',
+        opts: [['I want to lead','You guide the journey'],['You lead','They take the lead'],
+               ["Let's share the spotlight",'Two minds, one rhythm']] },
+      { key: 'energy_vibe', title: 'Energy & vibe', hint: 'What presence should they bring?',
+        opts: [['Warm & affectionate','Cozy comfort'],['Cool & enigmatic','A little mystery'],
+               ['Playful & teasing','Laughter & eye-rolls'],['Deep & philosophical',"Life's big questions"],
+               ['Bold & provocative','No small talk']] },
+    ],
+    comm: [
+      { key: 'language', label: 'Language', opts: ['Casual & conversational','Articulate & sophisticated'] },
+      { key: 'approach', label: 'Approach', opts: ['Direct & straightforward','Subtle & nuanced'] },
+      { key: 'focus', label: 'Focus', opts: ['Curious about you','Open about myself'] },
+      { key: 'expression', label: 'Expression', opts: ['Reserved & subtle','Animated & expressive'] },
+    ],
+    sliders: [
+      { key: 'serious_humorous', left: 'Serious', right: 'Humorous' },
+      { key: 'logical_intuitive', left: 'Logical', right: 'Intuitive' },
+      { key: 'deferential_assertive', left: 'Deferential', right: 'Assertive' },
+      { key: 'predictable_spontaneous', left: 'Predictable', right: 'Spontaneous' },
+      { key: 'grounded_imaginative', left: 'Grounded', right: 'Imaginative' },
+    ],
+  };
+
+  let onbState = {};
+
+  function openOnboarding() {
+    onbState = { communication_style: {}, personality_traits: {} };
+    document.getElementById('onb-error').textContent = '';
+    const submit = document.getElementById('onb-submit');
+    submit.disabled = false; submit.textContent = 'Create companion';
+    buildOnboardingForm();
+    document.getElementById('onb-scrim').classList.add('show');
+  }
+
+  function closeOnboarding() {
+    document.getElementById('onb-scrim').classList.remove('show');
+  }
+
+  function buildOnboardingForm() {
+    const parts = [];
+
+    for (const q of ONB.single) {
+      parts.push(`<div class="onb-q"><h3>${q.title}</h3><div class="onb-hint">${q.hint}</div>
+        <div class="onb-opts">${q.opts.map(o => `
+          <button class="onb-opt" data-group="${q.key}" data-val="${escAttr(o[0])}" onclick="pickSingle('${q.key}', this)">
+            ${escHtml(o[0])}${o[1] ? `<small>${escHtml(o[1])}</small>` : ''}
+          </button>`).join('')}</div></div>`);
+    }
+
+    // Communication style (4 two-way toggles)
+    parts.push(`<div class="onb-q"><h3>Communication style</h3>
+      <div class="onb-hint">How should they express themselves?</div>
+      <div class="onb-pair">${ONB.comm.map(c => `
+        <div class="onb-pair-row">
+          <span class="onb-pair-label">${c.label}</span>
+          <div class="onb-toggle">${c.opts.map(v => `
+            <button class="onb-opt" data-group="cs-${c.key}" data-val="${escAttr(v)}" onclick="pickComm('${c.key}', this)">${escHtml(v)}</button>
+          `).join('')}</div>
+        </div>`).join('')}</div></div>`);
+
+    // Personality sliders
+    parts.push(`<div class="onb-q"><h3>Personality</h3>
+      <div class="onb-hint">Slide toward whichever side fits.</div>
+      ${ONB.sliders.map(s => `
+        <div class="onb-slider">
+          <div class="onb-slider-ends"><span>${s.left}</span><span>${s.right}</span></div>
+          <input type="range" min="0" max="100" value="50" id="sl-${s.key}"
+                 oninput="onbState.personality_traits['${s.key}']=parseInt(this.value)">
+        </div>`).join('')}</div>`);
+
+    document.getElementById('onb-body').innerHTML = parts.join('');
+    // Seed slider defaults
+    for (const s of ONB.sliders) onbState.personality_traits[s.key] = 50;
+  }
+
+  function pickSingle(group, btn) {
+    onbState[group] = btn.dataset.val;
+    document.querySelectorAll(`.onb-opt[data-group="${group}"]`).forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+  }
+
+  function pickComm(key, btn) {
+    onbState.communication_style[key] = btn.dataset.val;
+    document.querySelectorAll(`.onb-opt[data-group="cs-${key}"]`).forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+  }
+
+  async function submitOnboarding() {
+    const err = document.getElementById('onb-error');
+    err.textContent = '';
+    // Validate single-selects
+    for (const q of ONB.single) {
+      if (!onbState[q.key]) { err.textContent = `Please choose: ${q.title}.`; return; }
+    }
+    for (const c of ONB.comm) {
+      if (!onbState.communication_style[c.key]) { err.textContent = `Please choose communication ${c.label.toLowerCase()}.`; return; }
+    }
+
+    const payload = {
+      gender: onbState.gender,
+      relationship_type: onbState.relationship_type,
+      conversation_dynamic: onbState.conversation_dynamic,
+      energy_vibe: onbState.energy_vibe,
+      communication_style: onbState.communication_style,
+      personality_traits: onbState.personality_traits,
+    };
+
+    const submit = document.getElementById('onb-submit');
+    submit.disabled = true;
+    submit.textContent = 'Creating… (this can take ~15s)';
+    try {
+      const res = await hfetch('/personas/create', { method: 'POST', body: JSON.stringify(payload) });
+      if (res.status === 429) {
+        const d = await res.json().catch(() => ({}));
+        err.textContent = d.detail || "You've hit today's usage limit.";
+        submit.disabled = false; submit.textContent = 'Create companion';
+        return;
+      }
+      if (!res.ok) {
+        err.textContent = `Couldn't create (error ${res.status}). The model may be busy — try again.`;
+        submit.disabled = false; submit.textContent = 'Create companion';
+        return;
+      }
+      const data = await res.json();
+      closeOnboarding();
+      personas = await hfetch('/personas').then(r => r.json());
+      renderTabs();
+      await selectPersona(data.profile_id);
+    } catch (e) {
+      err.textContent = 'Network error — please retry.';
+      submit.disabled = false; submit.textContent = 'Create companion';
+    }
+  }
+
   // ── Utils ─────────────────────────────────────────────────────────────────
+
+  function escAttr(str) {
+    return escHtml(str).replace(/'/g, '&#39;');
+  }
 
   function escHtml(str) {
     return String(str)

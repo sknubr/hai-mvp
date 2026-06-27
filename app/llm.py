@@ -242,3 +242,18 @@ def generate_persona(system: str, user: str) -> str:
     Returns raw text (caller parses JSON).
     """
     return _llm_call(system, user, temperature=0.90, max_tokens=4096)
+
+
+def generate_onboarding(onboarding_json: str) -> dict:
+    """
+    Generate a persona (name + hydrated base_schema) from a user's onboarding answers.
+    Returns a parsed dict: {"name": str, "base_schema": {...}}.
+    """
+    from app.prompts import build_onboarding_prompt
+
+    system, user = build_onboarding_prompt(onboarding_json)
+    raw = _llm_call(system, user, temperature=0.90, max_tokens=4096)
+    data = _parse_json_with_retry(raw, system, user, temperature=0.90)
+    if not isinstance(data, dict) or "base_schema" not in data:
+        raise ValueError("Onboarding generation returned an unexpected shape.")
+    return data

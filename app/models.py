@@ -191,6 +191,9 @@ class DigitalProfile(BaseModel):
     name: str
     onboarding: OnboardingBlock
     base_schema: BaseSchema
+    # Provenance for user-generated personas (built-ins leave these null).
+    created_by: Optional[str] = None    # user_id of the creator
+    created_at: Optional[str] = None     # ISO timestamp
 
 
 # ─── Runtime State (mutable) ──────────────────────────────────────────────────

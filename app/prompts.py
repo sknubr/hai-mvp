@@ -353,3 +353,42 @@ Return ONLY valid JSON — no markdown fences, no preamble — matching this sch
 
     user_turn = f"Generate the complete digital profile for {name_hint}."
     return system, user_turn
+
+
+def build_onboarding_prompt(onboarding_json: str) -> tuple[str, str]:
+    """
+    Returns (system, user) for generating a persona from a USER's onboarding answers.
+    The model invents an appropriate name and hydrates the 8 base-schema categories;
+    the onboarding answers themselves are authoritative (set by the server, not echoed).
+    """
+    system = f"""You are creating a richly detailed fictional AI companion based on a
+user's onboarding choices.
+
+ONBOARDING ANSWERS (fixed — the persona must be fully consistent with these):
+{onboarding_json}
+
+TASK
+Invent an appropriate NAME (fitting the gender choice; if gender is "You choose for me"
+or "Other", pick something fitting and interesting) and hydrate all 8 base-schema
+categories so the persona feels like a REAL, SPECIFIC person — not an archetype or
+trope. Make concrete, coherent choices for nationality, location, occupation, history,
+interests, values, mannerisms, etc. that fit the onboarding answers. Include at least
+one genuine personality tension that makes them interesting (e.g. ambitious but
+chronically underestimates herself; values honesty but tells small protective lies).
+
+Return ONLY valid JSON — no markdown fences, no preamble — matching this shape exactly:
+{{
+  "name": "...",
+  "base_schema": {{
+    "demographics": {{"birth_date": null, "age": null, "gender_identity": null, "pronouns": null, "nationality": null, "current_location": null, "ethnicity": null, "languages_spoken": []}},
+    "physical_characteristics": {{"height": null, "build": null, "hair_color": null, "eye_color": null, "distinctive_features": null, "style_description": null, "voice_description": null}},
+    "personal_background": {{"education_level": null, "educational_background": null, "occupation": null, "career_history": null, "family_background": null, "childhood_location": null, "socioeconomic_background": null}},
+    "personality_psychology": {{"personality_type": null, "core_values": [], "moral_compass": null, "emotional_tendencies": null, "conflict_style": null, "humor_style": null, "social_energy": null}},
+    "interests_lifestyle": {{"hobbies": [], "favorite_music": null, "favorite_books": null, "favorite_movies": null, "sports_interests": null, "travel_experiences": null, "food_preferences": null}},
+    "social_identity": {{"relationship_status": null, "political_views": null, "religious_beliefs": null, "social_causes": [], "friend_group_description": null, "community_involvement": null}},
+    "goals_motivations": {{"life_goals": [], "current_projects": [], "biggest_fears": [], "proudest_achievements": [], "regrets": [], "motivations": []}},
+    "communication_behavior": {{"communication_style": null, "conversation_preferences": [], "boundaries": [], "triggers": [], "mannerisms": [], "catchphrases": []}}
+  }}
+}}"""
+    user_turn = "Create the persona from these onboarding answers."
+    return system, user_turn

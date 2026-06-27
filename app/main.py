@@ -18,8 +18,10 @@ from app import llm as llm_module
 from app import state as state_module
 from app import usage as usage_module
 from app.models import (
+    BaseSchema,
     DigitalProfile,
     FeedPost,
+    OnboardingBlock,
     PersonaSummary,
     ReactionRequest,
     RunCycleResponse,
@@ -100,6 +102,33 @@ def list_personas(user_id: str = Depends(current_user)):
         s = state_module.load_state(profile_id, user_id)
         summaries.append(state_module.get_persona_summary(profile, s))
     return summaries
+
+
+@app.post("/personas/create")
+def create_persona(onboarding: OnboardingBlock, user_id: str = Depends(current_user)) -> dict[str, Any]:
+    """Generate a new persona from a user's onboarding answers and register it."""
+    import json as _json
+    from datetime import datetime, timezone
+
+    _check_quota(user_id)
+    onboarding_json = _json.dumps(onboarding.model_dump(mode="json"), indent=2)
+    data = llm_module.generate_onboarding(onboarding_json)
+    usage_module.record_call(user_id)
+
+    name = str(data.get("name") or "").strip() or "Unnamed"
+    profile_id = state_module.next_profile_id(name, PROFILES)
+    profile = DigitalProfile(
+        profile_id=profile_id,
+        name=name,
+        onboarding=onboarding,
+        base_schema=BaseSchema.model_validate(data["base_schema"]),
+        created_by=user_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    state_module.save_generated_profile(profile)
+    PROFILES[profile_id] = profile  # make it immediately available
+
+    return {"profile_id": profile_id, "name": name}
 
 
 @app.get("/personas/{persona_id}")
