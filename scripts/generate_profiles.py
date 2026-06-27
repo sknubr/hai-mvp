@@ -210,7 +210,25 @@ def main() -> None:
             print(user)
             continue
 
-        raw = generate_persona(system, user)
+        # Retry up to 3 times with backoff (handles free-tier rate limits)
+        import time
+        raw = None
+        for attempt in range(3):
+            try:
+                raw = generate_persona(system, user)
+                break
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    wait = 65 * (attempt + 1)
+                    print(f"  [rate limit] waiting {wait}s before retry {attempt + 1}/3...")
+                    time.sleep(wait)
+                else:
+                    print(f"  [ERROR] {e}")
+                    sys.exit(1)
+        if raw is None:
+            print(f"  [ERROR] All retries exhausted for {name}")
+            sys.exit(1)
 
         # Strip markdown fences if present
         cleaned = raw.strip()
@@ -229,6 +247,11 @@ def main() -> None:
 
         out_path.write_text(profile.model_dump_json(indent=2))
         print(f"  [ok] Saved → {out_path.relative_to(PROFILES_DIR.parent)}")
+
+        # Brief pause between personas to stay within per-minute limits
+        if persona != PERSONAS[-1]:
+            print("  [pacing] waiting 15s before next persona...")
+            time.sleep(15)
 
     if not args.dry_run:
         print("\nDone. Commit the profiles/ directory to the repo.")

@@ -448,6 +448,161 @@
     padding: 40px 20px;
   }
 
+  /* ── Inner-world drawer ── */
+  .inner-scrim {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 90;
+  }
+  .inner-scrim.show { display: block; }
+
+  .inner-drawer {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 380px;
+    max-width: 90vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 91;
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .inner-drawer.show { transform: translateX(0); }
+
+  .inner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .inner-close {
+    background: transparent; border: none; color: var(--muted);
+    font-size: 16px; cursor: pointer;
+  }
+  .inner-close:hover { color: var(--text); }
+
+  .inner-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .iw-section h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .iw-mood { font-size: 13px; line-height: 1.6; color: var(--text); font-style: italic; }
+  .iw-arc { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.7; }
+
+  .iw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .iw-chip {
+    font-size: 12px; padding: 4px 10px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--border); line-height: 1.4;
+  }
+
+  .iw-list { display: flex; flex-direction: column; gap: 6px; }
+  .iw-item {
+    font-size: 12.5px; line-height: 1.5; color: var(--text);
+    padding: 7px 10px; background: var(--surface2);
+    border-radius: 8px; border-left: 3px solid var(--accent);
+  }
+  .iw-item .sal { color: var(--muted); font-size: 11px; }
+  .iw-thread { border-left-color: var(--delay-color); }
+
+  .iw-day { margin-bottom: 10px; }
+  .iw-day-label { font-size: 11px; color: var(--accent); font-weight: 700; margin-bottom: 4px; }
+  .iw-event { font-size: 12px; color: var(--muted); line-height: 1.5; padding: 2px 0; }
+
+  .iw-journal {
+    font-size: 12px; line-height: 1.65; color: var(--muted);
+    white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+    padding: 10px; background: var(--surface2); border-radius: 8px;
+  }
+
+  /* ── Reply feedback bar ── */
+  .fb-bar { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .fb-btn {
+    background: transparent; border: 1px solid var(--border); border-radius: 10px;
+    cursor: pointer; font-size: 13px; padding: 1px 8px; opacity: 0.55; transition: all 0.12s;
+  }
+  .fb-btn:hover { opacity: 1; border-color: var(--accent); }
+  .fb-btn.chosen { opacity: 1; background: var(--accent-soft); border-color: var(--accent); }
+  .fb-btn:disabled { cursor: default; }
+  .fb-done { font-size: 11px; color: var(--green); }
+
+  /* ── Session feedback (drawer footer) ── */
+  .sess-fb {
+    border-top: 1px solid var(--border);
+    padding: 14px 18px;
+    flex-shrink: 0;
+    background: var(--surface2);
+  }
+  .sess-fb h4 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .sig-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sig-btn {
+    font-size: 12px; padding: 4px 10px; border-radius: 12px;
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); cursor: pointer; transition: all 0.12s;
+  }
+  .sig-btn:hover { border-color: var(--accent); color: var(--text); }
+  .sig-btn.chosen { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .sess-fb textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px; color: var(--text); font-size: 13px;
+    resize: vertical; min-height: 48px; font-family: inherit; outline: none;
+  }
+  .sess-fb textarea:focus { border-color: var(--accent); }
+  .sess-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .sess-send {
+    background: var(--accent); border: none; border-radius: 8px; color: #fff;
+    font-size: 13px; font-weight: 600; padding: 7px 14px; cursor: pointer;
+  }
+  .sess-send:hover { opacity: 0.88; }
+  .sess-done { font-size: 12px; color: var(--green); }
+
+  /* ── Access gate ── */
+  .gate-overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: var(--bg);
+    align-items: center; justify-content: center;
+  }
+  .gate-overlay.show { display: flex; }
+  .gate-card {
+    width: 320px; max-width: 90vw; text-align: center;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .gate-logo { font-size: 40px; font-weight: 800; color: var(--accent); letter-spacing: -2px; }
+  .gate-sub { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .gate-card input {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 11px 14px; color: var(--text); font-size: 14px; outline: none; font-family: inherit;
+  }
+  .gate-card input:focus { border-color: var(--accent); }
+  .gate-btn {
+    background: var(--accent); border: none; border-radius: 10px; color: #fff;
+    font-size: 14px; font-weight: 600; padding: 11px; cursor: pointer; margin-top: 4px;
+  }
+  .gate-btn:hover { opacity: 0.9; }
+  .gate-error { font-size: 12px; color: #ff6b6b; min-height: 14px; }
+
   /* ── Scrollbars ── */
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -465,6 +620,7 @@
   <div class="persona-tabs" id="persona-tabs">
     <div class="empty" style="padding:0;font-size:13px;">Loading personas…</div>
   </div>
+  <button class="advance-btn" id="inner-btn" onclick="toggleInner()" style="margin-right:8px">🧠 inner world</button>
   <button class="advance-btn" id="advance-btn" onclick="advanceDay()">⟳ Advance Day</button>
 </header>
 
@@ -508,25 +664,110 @@
   </div>
 </div>
 
-<div class="typing-indicator" id="typing">
-  <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+<!-- Inner-world drawer -->
+<div class="inner-scrim" id="inner-scrim" onclick="toggleInner()"></div>
+<aside class="inner-drawer" id="inner-drawer">
+  <div class="inner-head">
+    <span id="inner-title">Inner world</span>
+    <button class="inner-close" onclick="toggleInner()">✕</button>
+  </div>
+  <div class="inner-body" id="inner-body">
+    <div class="empty">Select a persona.</div>
+  </div>
+  <div class="sess-fb">
+    <h4>How is this persona feeling to you?</h4>
+    <div class="sig-row">
+      <button class="sig-btn" onclick="pickSignal(this,'alive')">alive</button>
+      <button class="sig-btn" onclick="pickSignal(this,'consistent')">consistent</button>
+      <button class="sig-btn" onclick="pickSignal(this,'stale')">stale / canned</button>
+    </div>
+    <textarea id="sess-comment" placeholder="What worked or felt off? (optional)"></textarea>
+    <div class="sess-actions">
+      <button class="sess-send" onclick="submitSession()">Send feedback</button>
+      <span class="sess-done" id="sess-done" style="display:none">thanks ✓</span>
+    </div>
+  </div>
+</aside>
+
+<!-- Access gate -->
+<div class="gate-overlay" id="gate-overlay">
+  <div class="gate-card">
+    <div class="gate-logo">hai</div>
+    <p class="gate-sub">A private preview. Enter your access code to start.</p>
+    <input id="gate-name" placeholder="Your first name" />
+    <input id="gate-code" type="password" placeholder="Access code" onkeydown="if(event.key==='Enter')submitGate()" />
+    <div class="gate-error" id="gate-error"></div>
+    <button class="gate-btn" onclick="submitGate()">Enter</button>
+  </div>
 </div>
 
 <script>
   let activePersonaId = null;
   let personas = [];
 
+  // ── Identity ────────────────────────────────────────────────────────────────
+  // A stable per-browser user id so each tester has private persona state.
+  let USER_ID = localStorage.getItem('hai_uid');
+  if (!USER_ID) {
+    USER_ID = (crypto.randomUUID ? crypto.randomUUID() : 'u-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+    localStorage.setItem('hai_uid', USER_ID);
+  }
+
+  // Centralized fetch that always carries the identity header.
+  function hfetch(path, opts = {}) {
+    opts.headers = Object.assign({ 'X-Hai-User': USER_ID, 'Content-Type': 'application/json' }, opts.headers || {});
+    return fetch(path, opts);
+  }
+
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   async function init() {
+    // Gate flow: if the server requires an access code and we haven't passed it, show the gate.
     try {
-      personas = await fetch('/personas').then(r => r.json());
+      const { required } = await fetch('/gate/required').then(r => r.json());
+      if (required && localStorage.getItem('hai_gate_ok') !== '1') {
+        showGate();
+        return;
+      }
+    } catch (e) { /* if the check fails, fall through and try to load */ }
+    await loadApp();
+  }
+
+  async function loadApp() {
+    try {
+      personas = await hfetch('/personas').then(r => r.json());
       renderTabs();
       if (personas.length > 0) {
         await selectPersona(personas[0].profile_id);
       }
     } catch (e) {
       console.error('Init failed:', e);
+    }
+  }
+
+  // ── Access gate ──────────────────────────────────────────────────────────────
+
+  function showGate() {
+    document.getElementById('gate-overlay').classList.add('show');
+  }
+
+  async function submitGate() {
+    const code = document.getElementById('gate-code').value.trim();
+    const name = document.getElementById('gate-name').value.trim();
+    const errEl = document.getElementById('gate-error');
+    errEl.textContent = '';
+    try {
+      const res = await hfetch('/gate', { method: 'POST', body: JSON.stringify({ code, display_name: name }) });
+      if (!res.ok) {
+        errEl.textContent = res.status === 403 ? 'That code didn’t work — try again.' : 'Something went wrong.';
+        return;
+      }
+      localStorage.setItem('hai_gate_ok', '1');
+      if (name) localStorage.setItem('hai_name', name);
+      document.getElementById('gate-overlay').classList.remove('show');
+      await loadApp();
+    } catch (e) {
+      errEl.textContent = 'Network error — please retry.';
     }
   }
 
@@ -557,13 +798,14 @@
 
     await loadChat();
     await loadFeed();
+    if (innerOpen) await loadInner();
   }
 
   // ── Chat ──────────────────────────────────────────────────────────────────
 
   async function loadChat() {
     if (!activePersonaId) return;
-    const msgs = await fetch(`/personas/${activePersonaId}/chat`).then(r => r.json());
+    const msgs = await hfetch(`/personas/${activePersonaId}/chat`).then(r => r.json());
     renderMessages(msgs);
   }
 
@@ -599,6 +841,28 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  // Create a fresh typing row inside the messages container; return it so the
+  // caller can remove it. Built dynamically so a messages re-render can never
+  // leave a dangling reference (which previously froze the UI).
+  function showTyping() {
+    const container = document.getElementById('messages');
+    const empty = container.querySelector('.empty');
+    if (empty) empty.remove();
+    const row = document.createElement('div');
+    row.className = 'message-row persona';
+    row.dataset.typing = '1';
+    row.innerHTML = `<div class="typing-indicator show">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      </div>`;
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+    return row;
+  }
+
+  function removeTyping() {
+    document.querySelectorAll('[data-typing="1"]').forEach(el => el.remove());
+  }
+
   async function sendMessage() {
     if (!activePersonaId) return;
     const input = document.getElementById('input');
@@ -608,28 +872,32 @@
     input.value = '';
     autoResize(input);
     setInputEnabled(false);
-
     appendMessage('user', text, 'immediate');
-
-    // Show typing indicator inside the messages div
-    const typing = document.getElementById('typing');
-    const container = document.getElementById('messages');
-    container.appendChild(typing);
-    typing.classList.add('show');
-    container.scrollTop = container.scrollHeight;
+    showTyping();
 
     try {
-      const res = await fetch(`/personas/${activePersonaId}/message`, {
+      const res = await hfetch(`/personas/${activePersonaId}/message`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-      const data = await res.json();
-      typing.classList.remove('show');
-      appendMessage('persona', data.reply, data.delay_bucket);
+      removeTyping();
+      if (res.status === 429) {
+        const d = await res.json().catch(() => ({}));
+        appendMessage('persona', `[${d.detail || "You've hit today's usage limit for this preview."}]`, 'immediate');
+      } else if (!res.ok) {
+        const detail = await res.text();
+        appendMessage('persona', `[Error ${res.status}: the model is busy or rate-limited. Try again.]`, 'immediate');
+        console.error('message failed:', detail);
+      } else {
+        const data = await res.json();
+        appendMessage('persona', data.reply, data.delay_bucket);
+        lastReplyText = data.reply;
+        showReplyFeedback(data.reply);
+      }
     } catch (e) {
-      typing.classList.remove('show');
-      appendMessage('persona', '[Error getting reply. Check server logs.]', 'immediate');
+      removeTyping();
+      appendMessage('persona', '[Network error. Check server logs.]', 'immediate');
+      console.error(e);
     } finally {
       setInputEnabled(true);
       input.focus();
@@ -662,7 +930,18 @@
     document.getElementById('advance-btn').textContent = '…';
 
     try {
-      const res = await fetch(`/personas/${activePersonaId}/cycle`, { method: 'POST' });
+      const res = await hfetch(`/personas/${activePersonaId}/cycle`, { method: 'POST' });
+      if (res.status === 429) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.detail || "You've hit today's usage limit for this preview. Try again tomorrow.");
+        return;
+      }
+      if (!res.ok) {
+        const detail = await res.text();
+        console.error('cycle failed:', detail);
+        alert(`Couldn't advance the day (error ${res.status}).\nThe model is likely busy or rate-limited — try again in a moment.`);
+        return;
+      }
       const data = await res.json();
 
       // Update local persona cache
@@ -680,9 +959,11 @@
 
       // Reload feed if there's a new post
       if (data.post) await loadFeed();
+      if (innerOpen) await loadInner();
 
     } catch (e) {
-      alert('Error advancing day. Check server logs.');
+      console.error(e);
+      alert('Network error advancing the day. Check server logs.');
     } finally {
       document.getElementById('advance-btn').textContent = '⟳ Advance Day';
       setInputEnabled(true);
@@ -710,11 +991,97 @@
     document.getElementById('cycle-overlay').classList.remove('show');
   }
 
+  // ── Inner world ─────────────────────────────────────────────────────────────
+
+  let innerOpen = false;
+
+  async function toggleInner() {
+    innerOpen = !innerOpen;
+    document.getElementById('inner-drawer').classList.toggle('show', innerOpen);
+    document.getElementById('inner-scrim').classList.toggle('show', innerOpen);
+    if (innerOpen) await loadInner();
+  }
+
+  async function loadInner() {
+    if (!activePersonaId) return;
+    const p = personas.find(x => x.profile_id === activePersonaId);
+    document.getElementById('inner-title').textContent = `${p ? p.name : ''} — inner world`;
+    const body = document.getElementById('inner-body');
+    body.innerHTML = '<div class="empty">Loading…</div>';
+    let d;
+    try {
+      d = await hfetch(`/personas/${activePersonaId}/inner`).then(r => r.json());
+    } catch (e) {
+      body.innerHTML = '<div class="empty">Could not load inner state.</div>';
+      return;
+    }
+
+    const sections = [];
+
+    // Mood + arc
+    const arc = (d.mood_history || []).map(m => `Day ${m.cycle}`).join(' → ');
+    sections.push(`<div class="iw-section">
+      <h4>Mood · Day ${d.cycle_count}</h4>
+      <div class="iw-mood">${d.mood ? escHtml(d.mood) : 'Not yet established.'}</div>
+      ${d.mood_history && d.mood_history.length > 1 ? `<div class="iw-arc">arc: ${arc}</div>` : ''}
+    </div>`);
+
+    // Preoccupations
+    if (d.preoccupations && d.preoccupations.length) {
+      sections.push(`<div class="iw-section">
+        <h4>On their mind</h4>
+        <div class="iw-chips">${d.preoccupations.map(p => `<span class="iw-chip">${escHtml(p)}</span>`).join('')}</div>
+      </div>`);
+    }
+
+    // What it remembers about you
+    if (d.user_memory && d.user_memory.length) {
+      sections.push(`<div class="iw-section">
+        <h4>What they remember about you</h4>
+        <div class="iw-list">${d.user_memory.map(m =>
+          `<div class="iw-item">${escHtml(m.text)} <span class="sal">·s${m.salience}</span></div>`).join('')}</div>
+      </div>`);
+    }
+
+    // Open threads
+    if (d.open_threads && d.open_threads.length) {
+      sections.push(`<div class="iw-section">
+        <h4>Following up on</h4>
+        <div class="iw-list">${d.open_threads.map(t =>
+          `<div class="iw-item iw-thread">${escHtml(t.text)}</div>`).join('')}</div>
+      </div>`);
+    }
+
+    // Recent life
+    if (d.recent_life && d.recent_life.length) {
+      const days = d.recent_life.map(day => `
+        <div class="iw-day">
+          <div class="iw-day-label">Day ${day.cycle}</div>
+          ${day.events.map(e => `<div class="iw-event">• ${escHtml(e.text)}</div>`).join('')}
+        </div>`).join('');
+      sections.push(`<div class="iw-section"><h4>Recent life</h4>${days}</div>`);
+    }
+
+    // Journal
+    if (d.journal) {
+      sections.push(`<div class="iw-section">
+        <h4>Journal</h4>
+        <div class="iw-journal">${escHtml(d.journal)}</div>
+      </div>`);
+    }
+
+    if (!sections.length) {
+      body.innerHTML = '<div class="empty">Nothing yet. Advance a day to begin evolving.</div>';
+    } else {
+      body.innerHTML = sections.join('');
+    }
+  }
+
   // ── Feed ──────────────────────────────────────────────────────────────────
 
   async function loadFeed() {
     if (!activePersonaId) return;
-    const posts = await fetch(`/feed/${activePersonaId}`).then(r => r.json());
+    const posts = await hfetch(`/feed/${activePersonaId}`).then(r => r.json());
     renderFeed(posts);
   }
 
@@ -747,12 +1114,70 @@
   async function react(postId, personaId, btn, type, value) {
     btn.classList.toggle('reacted');
     try {
-      await fetch('/reactions', {
+      await hfetch('/reactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ post_id: postId, persona_id: personaId, reaction_type: type, reaction_value: value }),
       });
     } catch (e) { console.error('React failed:', e); }
+  }
+
+  // ── Feedback (Milestone B) ────────────────────────────────────────────────
+
+  let lastReplyText = '';
+
+  async function sendFeedback(payload) {
+    try {
+      await hfetch('/feedback', {
+        method: 'POST',
+        body: JSON.stringify(Object.assign({ persona_id: activePersonaId }, payload)),
+      });
+      return true;
+    } catch (e) { console.error('feedback failed:', e); return false; }
+  }
+
+  // Inline 👍/👎 under the latest reply.
+  function showReplyFeedback(replyText) {
+    const container = document.getElementById('messages');
+    const rows = container.querySelectorAll('.message-row.persona');
+    const last = rows[rows.length - 1];
+    if (!last) return;
+    const bar = document.createElement('div');
+    bar.className = 'fb-bar';
+    bar.innerHTML = `
+      <button class="fb-btn" title="rings true" onclick="rateReply(this,'up')">👍</button>
+      <button class="fb-btn" title="off / breaks character" onclick="rateReply(this,'down')">👎</button>
+      <span class="fb-done" style="display:none">thanks ✓</span>`;
+    last.appendChild(bar);
+  }
+
+  async function rateReply(btn, rating) {
+    const bar = btn.parentElement;
+    bar.querySelectorAll('.fb-btn').forEach(b => b.disabled = true);
+    btn.classList.add('chosen');
+    await sendFeedback({ kind: 'reply', rating, target_ref: (lastReplyText || '').slice(0, 200) });
+    bar.querySelector('.fb-done').style.display = 'inline';
+  }
+
+  // Per-persona session feedback (signal tags + free text) in the inner drawer footer.
+  let sessionSignal = '';
+  function pickSignal(btn, tag) {
+    sessionSignal = (sessionSignal === tag) ? '' : tag;
+    document.querySelectorAll('.sig-btn').forEach(b => b.classList.remove('chosen'));
+    if (sessionSignal) btn.classList.add('chosen');
+  }
+
+  async function submitSession() {
+    const ta = document.getElementById('sess-comment');
+    const comment = ta.value.trim();
+    if (!comment && !sessionSignal) return;
+    const ok = await sendFeedback({ kind: 'session', signal_tag: sessionSignal, comment });
+    if (ok) {
+      ta.value = '';
+      sessionSignal = '';
+      document.querySelectorAll('.sig-btn').forEach(b => b.classList.remove('chosen'));
+      document.getElementById('sess-done').style.display = 'inline';
+      setTimeout(() => { document.getElementById('sess-done').style.display = 'none'; }, 2500);
+    }
   }
 
   // ── Utils ─────────────────────────────────────────────────────────────────

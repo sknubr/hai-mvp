@@ -17,9 +17,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.state import load_all_profiles, load_state, save_state
+from app.state import (
+    load_all_profiles,
+    load_state,
+    save_state,
+    append_events,
+    append_mood,
+    merge_user_memory,
+    set_preoccupations,
+    set_open_threads,
+)
 from app.llm import run_cycle
-from app.models import RecentEvent, RuntimeState
+from app.models import RuntimeState
 
 
 def main():
@@ -53,50 +62,82 @@ def main():
     state = load_state(profile.profile_id)
 
     for i in range(args.cycles):
-        print(f"\n─── CYCLE {state.cycle_count + 1} ───")
+        new_cycle = state.cycle_count + 1
+        print(f"\n─── CYCLE {new_cycle} ───")
+
+        prev_preocc = set(state.preoccupations)
+
         try:
             result = run_cycle(profile, state)
         except Exception as e:
             print(f"[ERROR] {e}")
             sys.exit(1)
 
-        # Update state
-        new_events = [RecentEvent(cycle=state.cycle_count + 1, text=e) for e in result.events]
+        # Stamp + merge into layered memory (mirrors the /cycle endpoint).
+        for e in result.events:
+            e.cycle = new_cycle
+        for f in result.salient_user_facts:
+            if not f.cycle_added:
+                f.cycle_added = new_cycle
+        for t in result.open_threads:
+            if not t.cycle_added:
+                t.cycle_added = new_cycle
+
         state = state.model_copy(update={
-            "cycle_count": state.cycle_count + 1,
+            "cycle_count": new_cycle,
             "mood": result.mood,
             "journal": result.journal,
-            "recent_events": new_events,
         })
+        state = append_events(state, new_cycle, result.events)
+        state = append_mood(state, new_cycle, result.mood)
+        state = merge_user_memory(state, result.salient_user_facts)
+        state = set_preoccupations(state, result.preoccupations)
+        state = set_open_threads(state, result.open_threads)
         save_state(state)
 
-        print(f"\nEvents:")
+        print("\nEvents:")
         for ev in result.events:
-            print(f"  • {ev}")
+            print(f"  • [s{ev.salience}] {ev.text}")
 
         print(f"\nMood: {result.mood}")
 
-        print(f"\nJournal ({len(result.journal.split())} words):")
-        # Print first 150 words of journal
-        words = result.journal.split()
-        preview = " ".join(words[:150])
-        if len(words) > 150:
-            preview += " …"
-        print(f"  {preview}")
+        # Drift diff (M6): show how preoccupations evolved.
+        now_preocc = set(result.preoccupations)
+        added = now_preocc - prev_preocc
+        dropped = prev_preocc - now_preocc
+        carried = now_preocc & prev_preocc
+        print("\nPreoccupations:")
+        print(f"  carried: {sorted(carried) or '—'}")
+        print(f"  + added: {sorted(added) or '—'}")
+        print(f"  - dropped/resolved: {sorted(dropped) or '—'}")
 
-        if result.post:
-            print(f"\nPost:")
-            print(f"  {result.post}")
-        else:
-            print(f"\nPost: [no post this cycle]")
+        if result.salient_user_facts:
+            print("\nNew salient facts about the user:")
+            for f in result.salient_user_facts:
+                print(f"  • [s{f.salience}] {f.text}")
+
+        open_t = [t for t in result.open_threads if t.status == "open"]
+        if open_t:
+            print("\nOpen follow-up threads:")
+            for t in open_t:
+                print(f"  • {t.text}")
+
+        words = result.journal.split()
+        preview = " ".join(words[:120])
+        if len(words) > 120:
+            preview += " …"
+        print(f"\nJournal ({len(words)} words): {preview}")
+
+        print(f"\nPost: {result.post if result.post else '[no post this cycle]'}")
 
     print("\n" + "=" * 60)
-    print(f"Done. {profile.name} is now on cycle {state.cycle_count}.")
-    print("\nEvaluate 'alive' signal:")
-    print("  ✓ Are events specific and grounded in this persona's world?")
-    print("  ✓ Does the journal feel like this character's voice?")
-    print("  ✓ Does the mood change incrementally across cycles?")
-    print("  ✓ Are posts (when present) authentic to this persona?")
+    print(f"Done. {profile.name} is on cycle {state.cycle_count}.")
+    print(f"  event_log: {len(state.event_log)} events | user_memory: {len(state.user_memory)} facts "
+          f"| open threads: {len([t for t in state.open_threads if t.status=='open'])}")
+    print("\nEvaluate signals:")
+    print("  ✓ ALIVE: events specific, salience-varied, building on recent days?")
+    print("  ✓ CONSISTENT: voice/values stable; preoccupations carry, not reset?")
+    print("  ✓ CONTINUITY: substantive user facts captured; trivia ignored?")
 
 
 if __name__ == "__main__":

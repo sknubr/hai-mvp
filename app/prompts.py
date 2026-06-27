@@ -98,15 +98,37 @@ def build_reply_prompt(
     user_message: str,
 ) -> tuple[str, str]:
     """Returns (system_prompt, user_turn)."""
+    from app.state import recent_events_window
+
     identity = build_identity_block(profile)
 
-    events_text = ""
-    if state.recent_events:
-        events_text = "\n".join(f"  - {e.text}" for e in state.recent_events)
+    # Recent life: events from the last ~2 days (windowed from the episodic log),
+    # not just the current cycle — so the persona can reference "the other day."
+    window = recent_events_window(state, cycles=2)
+    if window:
+        events_text = "\n".join(f"  - (day {e.cycle}) {e.text}" for e in window)
     else:
         events_text = "  (no events yet — first interaction)"
 
-    buffer_text = ""
+    # Current preoccupations — colour tone and topics.
+    if state.preoccupations:
+        preocc_text = "\n".join(f"  - {p}" for p in state.preoccupations)
+    else:
+        preocc_text = "  (none yet)"
+
+    # Long-term memory of the user (salience-sorted), and open follow-up threads.
+    if state.user_memory:
+        ranked = sorted(state.user_memory, key=lambda m: m.salience, reverse=True)
+        mem_text = "\n".join(f"  - {m.text}" for m in ranked[:12])
+    else:
+        mem_text = "  (you don't know much about them yet)"
+
+    open_threads = [t for t in state.open_threads if t.status == "open"]
+    if open_threads:
+        threads_text = "\n".join(f"  - {t.text}" for t in open_threads)
+    else:
+        threads_text = "  (none)"
+
     recent = state.short_buffer[-SHORT_BUFFER_SIZE:]
     if recent:
         buffer_lines = []
@@ -120,12 +142,22 @@ def build_reply_prompt(
     system = f"""{identity}
 
 CURRENT STATE
-Cycle: {state.cycle_count}
-Mood & preoccupations: {state.mood or 'Not yet established — early days.'}
-Recent events (this cycle):
+Cycle (notional day): {state.cycle_count}
+Mood right now: {state.mood or 'Not yet established — early days.'}
+
+ON YOUR MIND LATELY (current preoccupations):
+{preocc_text}
+
+YOUR RECENT LIFE (the last couple of days — you can reference these naturally):
 {events_text}
 
-JOURNAL (your evolving self-summary — long-term memory):
+WHAT YOU REMEMBER ABOUT THEM (long-term memory of this person):
+{mem_text}
+
+THINGS TO FOLLOW UP ON (open threads):
+{threads_text}
+
+JOURNAL (your evolving self-summary):
 {state.journal or 'No journal yet — you are just getting started.'}
 
 CONVERSATION HISTORY:
@@ -136,9 +168,13 @@ You are {profile.name}. Reply to the user's latest message — stay fully in cha
 
 Rules:
 - Match your energy_vibe and communication_style exactly.
-- Draw naturally on your mood, recent events, or journal when it fits — do not force it,
-  but let your current state colour your response.
-- Never invent new fixed biographical facts that contradict IDENTITY.
+- You genuinely remember this person. Draw on WHAT YOU REMEMBER ABOUT THEM and, when it
+  feels natural, follow up on an open thread (e.g. "how did the presentation go?"). Don't
+  force it, and don't dump everything you know — weave it in like a real friend would.
+- Let your current mood and preoccupations colour your tone; you can reference your
+  recent life when relevant.
+- NEVER fabricate memories of them that aren't listed above, and never invent fixed
+  biographical facts about yourself that contradict IDENTITY.
 - Do not break character, explain yourself, or reference being an AI.
 - Reply length: match the register of the conversation. Short messages warrant short
   replies unless depth is called for.
@@ -150,12 +186,33 @@ Rules:
 
 def build_run_cycle_prompt(profile: DigitalProfile, state: RuntimeState) -> tuple[str, str]:
     """Returns (system_prompt, user_turn)."""
-    identity = build_identity_block(profile)
+    from app.state import recent_events_window
 
+    identity = build_identity_block(profile)
     next_cycle = state.cycle_count + 1
 
-    # Last 5 messages for context
-    recent_msgs = state.short_buffer[-5:]
+    # Recent life: events from the last ~2 cycles so new days build on recent life.
+    window = recent_events_window(state, cycles=2)
+    if window:
+        recent_life = "\n".join(f"  - (day {e.cycle}) {e.text}" for e in window)
+    else:
+        recent_life = "  (no prior days yet — this is the beginning)"
+
+    # Prior preoccupations to carry forward / evolve / resolve.
+    if state.preoccupations:
+        preocc_text = "\n".join(f"  - {p}" for p in state.preoccupations)
+    else:
+        preocc_text = "  (none yet)"
+
+    # Prior open threads with the user (follow-ups).
+    open_threads = [t for t in state.open_threads if t.status == "open"]
+    if open_threads:
+        threads_text = "\n".join(f"  - {t.text}" for t in open_threads)
+    else:
+        threads_text = "  (none yet)"
+
+    # Recent conversation (last 8 messages) — source for salient user facts.
+    recent_msgs = state.short_buffer[-8:]
     if recent_msgs:
         conv_lines = []
         for msg in recent_msgs:
@@ -169,44 +226,70 @@ def build_run_cycle_prompt(profile: DigitalProfile, state: RuntimeState) -> tupl
 
 CURRENT STATE
 Cycle: {state.cycle_count} → advancing to cycle {next_cycle}
-Mood & preoccupations: {state.mood or 'None yet — first cycle.'}
+Current mood: {state.mood or 'None yet — first cycle.'}
+
+CURRENT PREOCCUPATIONS (what has been on your mind):
+{preocc_text}
+
+YOUR RECENT LIFE (events from the last couple of days — today should build on these):
+{recent_life}
+
+OPEN THREADS WITH THE USER (things you might follow up on):
+{threads_text}
 
 JOURNAL (current long-term self-summary):
 {state.journal or 'Empty — this is your first cycle.'}
 
-RECENT CONVERSATION HIGHLIGHTS:
+RECENT CONVERSATION WITH THE USER:
 {conv_text}
 
 INSTRUCTIONS — ADVANCE ONE DAY
 Generate a structured JSON response advancing {profile.name} through one notional day.
+Evolution is INCREMENTAL and CONTINUOUS — today grows out of your recent life and
+preoccupations; it never resets your character.
 
-1. EVENTS (3–5 items): Invent specific, plausible things that happened to or were
-   witnessed by {profile.name} today. Ground each in their interests, location, and
-   current preoccupations. Events must be SPECIFIC and OWNABLE — not generic
-   ("went for a walk") but particular
-   ("walked past the old textile factory at dusk and noticed the way the rusted gate
-   framed the sky — thought about decay as a kind of patience").
-   These events should be usable as conversation material in future chat replies.
+1. EVENTS (3–5): Specific, OWNABLE things that happened to or were witnessed by
+   {profile.name} today — grounded in your interests, location, and current
+   preoccupations, and building on your recent life above. Not generic ("went for a
+   walk") but particular ("walked past the old textile factory at dusk; the rusted gate
+   framed the sky — thought about decay as a kind of patience"). Tag each with a
+   salience 1–5 (5 = a genuinely memorable day, 1 = minor).
 
-2. JOURNAL (300–500 words): Rewrite the long-term self-summary integrating today's
-   events and any salient conversation. Preserve core identity — drift is incremental
-   (new interests, shifting preoccupations, small mood changes), never character
-   reversals. Write in first person, in {profile.name}'s voice, as a private reflection.
+2. PREOCCUPATIONS: Return your FULL current list of what's top-of-mind now. Carry
+   forward ones that still matter, evolve them as today shifts things, drop or resolve
+   ones that have run their course, and add anything new today raised. Small drift, not
+   wholesale replacement.
 
-3. MOOD (1–2 sentences): {profile.name}'s current emotional state and top preoccupation
-   entering the next cycle. Be specific — not "contemplative" but "restless about the
-   half-finished letter on her desk, keeps reading the last line."
+3. JOURNAL (300–500 words): Rewrite your long-term self-summary, INTEGRATING today into
+   what was already there — preserve core identity and any ongoing threads from the
+   previous journal; do not discard them. First person, in {profile.name}'s voice.
 
-4. POST (optional): Does {profile.name} freely choose to post publicly today?
-   If yes, write the post in their authentic voice — specific, not performative,
-   the kind of thing this particular person would actually share.
-   Not every cycle needs a post. If no, return null.
+4. MOOD (1–2 sentences): Your emotional state and top preoccupation entering the next
+   cycle. Specific — not "contemplative" but "restless about the half-finished letter on
+   her desk, keeps re-reading the last line."
+
+5. SALIENT_USER_FACTS: From the recent conversation, record ONLY facts about the USER
+   worth remembering for weeks — plans, values, relationships, struggles, things you'd
+   want to follow up on. IGNORE small talk and pleasantries. Each fact gets a salience
+   1–5. Return an empty list if nothing substantive was shared.
+
+6. OPEN_THREADS: Return your FULL current list of follow-ups with the user. Mark ones
+   that are now addressed as "resolved"; keep unresolved ones "open"; add new ones the
+   conversation raised (e.g. "user has a big presentation Thursday — ask how it went").
+
+7. POST (optional): Do you freely choose to post publicly today? If today stirred
+   something worth sharing, you likely would — lean toward posting when there's
+   something authentic to say; skip when the day was unremarkable or too private.
+   Write it in your authentic voice (can be short), or null.
 
 Return ONLY valid JSON — no markdown fences, no preamble:
 {{
-  "events": ["...", "...", "..."],
+  "events": [{{"cycle": {next_cycle}, "text": "...", "salience": 3}}],
+  "preoccupations": ["...", "..."],
   "journal": "...",
   "mood": "...",
+  "salient_user_facts": [{{"text": "...", "cycle_added": {next_cycle}, "salience": 4}}],
+  "open_threads": [{{"text": "...", "status": "open", "cycle_added": {next_cycle}}}],
   "post": "..." or null
 }}"""
 

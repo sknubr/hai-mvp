@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from typing import Annotated, Literal, Optional
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _coerce_str(v):
+    """LLMs sometimes return a list where the schema expects a single string."""
+    if isinstance(v, list):
+        return "; ".join(str(x) for x in v)
+    return v
+
+
+# String field tolerant of LLMs returning a list instead of a string.
+LooseStr = Annotated[Optional[str], BeforeValidator(_coerce_str)]
 
 
 # ─── Onboarding Enums ─────────────────────────────────────────────────────────
@@ -85,63 +96,63 @@ class OnboardingBlock(BaseModel):
 # ─── Base Schema Categories ───────────────────────────────────────────────────
 
 class Demographics(BaseModel):
-    birth_date: Optional[str] = None
+    birth_date: LooseStr = None
     age: Optional[int] = None
-    gender_identity: Optional[str] = None
-    pronouns: Optional[str] = None
-    nationality: Optional[str] = None
-    current_location: Optional[str] = None
-    ethnicity: Optional[str] = None
+    gender_identity: LooseStr = None
+    pronouns: LooseStr = None
+    nationality: LooseStr = None
+    current_location: LooseStr = None
+    ethnicity: LooseStr = None
     languages_spoken: list[str] = []
 
 
 class PhysicalCharacteristics(BaseModel):
-    height: Optional[str] = None
-    build: Optional[str] = None
-    hair_color: Optional[str] = None
-    eye_color: Optional[str] = None
-    distinctive_features: Optional[str] = None
-    style_description: Optional[str] = None
-    voice_description: Optional[str] = None
+    height: LooseStr = None
+    build: LooseStr = None
+    hair_color: LooseStr = None
+    eye_color: LooseStr = None
+    distinctive_features: LooseStr = None
+    style_description: LooseStr = None
+    voice_description: LooseStr = None
 
 
 class PersonalBackground(BaseModel):
-    education_level: Optional[str] = None
-    educational_background: Optional[str] = None
-    occupation: Optional[str] = None
-    career_history: Optional[str] = None
-    family_background: Optional[str] = None
-    childhood_location: Optional[str] = None
-    socioeconomic_background: Optional[str] = None
+    education_level: LooseStr = None
+    educational_background: LooseStr = None
+    occupation: LooseStr = None
+    career_history: LooseStr = None
+    family_background: LooseStr = None
+    childhood_location: LooseStr = None
+    socioeconomic_background: LooseStr = None
 
 
 class PersonalityPsychology(BaseModel):
-    personality_type: Optional[str] = None
+    personality_type: LooseStr = None
     core_values: list[str] = []
-    moral_compass: Optional[str] = None
-    emotional_tendencies: Optional[str] = None
-    conflict_style: Optional[str] = None
-    humor_style: Optional[str] = None
-    social_energy: Optional[str] = None
+    moral_compass: LooseStr = None
+    emotional_tendencies: LooseStr = None
+    conflict_style: LooseStr = None
+    humor_style: LooseStr = None
+    social_energy: LooseStr = None
 
 
 class InterestsLifestyle(BaseModel):
     hobbies: list[str] = []
-    favorite_music: Optional[str] = None
-    favorite_books: Optional[str] = None
-    favorite_movies: Optional[str] = None
-    sports_interests: Optional[str] = None
-    travel_experiences: Optional[str] = None
-    food_preferences: Optional[str] = None
+    favorite_music: LooseStr = None
+    favorite_books: LooseStr = None
+    favorite_movies: LooseStr = None
+    sports_interests: LooseStr = None
+    travel_experiences: LooseStr = None
+    food_preferences: LooseStr = None
 
 
 class SocialIdentity(BaseModel):
-    relationship_status: Optional[str] = None
-    political_views: Optional[str] = None
-    religious_beliefs: Optional[str] = None
+    relationship_status: LooseStr = None
+    political_views: LooseStr = None
+    religious_beliefs: LooseStr = None
     social_causes: list[str] = []
-    friend_group_description: Optional[str] = None
-    community_involvement: Optional[str] = None
+    friend_group_description: LooseStr = None
+    community_involvement: LooseStr = None
 
 
 class GoalsMotivations(BaseModel):
@@ -154,7 +165,7 @@ class GoalsMotivations(BaseModel):
 
 
 class CommunicationBehavior(BaseModel):
-    communication_style: Optional[str] = None
+    communication_style: LooseStr = None
     conversation_preferences: list[str] = []
     boundaries: list[str] = []
     triggers: list[str] = []
@@ -196,8 +207,38 @@ class BufferMessage(BaseModel):
 
 
 class RecentEvent(BaseModel):
+    # Deprecated: superseded by EventEntry / event_log. Kept so old state
+    # files still parse. No longer written.
     cycle: int
     text: str
+
+
+# ─── Layered memory (M1) ──────────────────────────────────────────────────────
+
+class EventEntry(BaseModel):
+    """The persona's own episodic life — accumulates in event_log."""
+    cycle: int
+    text: str
+    salience: int = Field(3, ge=1, le=5)  # 5 = highly memorable
+
+
+class MemoryItem(BaseModel):
+    """A durable fact about the USER (long-term memory)."""
+    text: str
+    cycle_added: int = 0
+    salience: int = Field(3, ge=1, le=5)
+
+
+class ThreadItem(BaseModel):
+    """Something to follow up on with the user."""
+    text: str
+    status: Literal["open", "resolved"] = "open"
+    cycle_added: int = 0
+
+
+class MoodEntry(BaseModel):
+    cycle: int
+    mood: str
 
 
 class RuntimeState(BaseModel):
@@ -205,17 +246,27 @@ class RuntimeState(BaseModel):
     cycle_count: int = 0
     mood: str = ""
     journal: str = ""
-    recent_events: list[RecentEvent] = []
     short_buffer: list[BufferMessage] = []
+    # Layered memory (M1)
+    event_log: list[EventEntry] = []        # persona's accumulating episodic life
+    preoccupations: list[str] = []          # current top-of-mind, evolves/resolves
+    user_memory: list[MemoryItem] = []      # long-term memory of the user
+    open_threads: list[ThreadItem] = []     # follow-ups
+    mood_history: list[MoodEntry] = []
+    # Deprecated — retained for backward-compat parsing only.
+    recent_events: list[RecentEvent] = []
 
 
 # ─── LLM Response Models ──────────────────────────────────────────────────────
 
 class RunCycleResponse(BaseModel):
-    events: list[str] = Field(..., min_length=3, max_length=5)
+    events: list[EventEntry] = Field(..., min_length=3, max_length=5)
     journal: str
     mood: str
-    post: Optional[str] = None
+    preoccupations: list[str] = []
+    open_threads: list[ThreadItem] = []
+    salient_user_facts: list[MemoryItem] = []
+    post: LooseStr = None
 
 
 # ─── API Models ───────────────────────────────────────────────────────────────

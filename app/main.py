@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from app import feed as feed_module
 from app import llm as llm_module
 from app import state as state_module
+from app import usage as usage_module
 from app.models import (
     DigitalProfile,
     FeedPost,
@@ -23,6 +29,7 @@ from app.models import (
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+ACCESS_CODE = os.getenv("HAI_ACCESS_CODE", "")  # empty = no gate (local dev)
 
 # Module-level profile cache — loaded at startup, never mutated at runtime
 PROFILES: dict[str, DigitalProfile] = {}
@@ -37,11 +44,41 @@ async def lifespan(app: FastAPI):
     else:
         names = ", ".join(p.name for p in PROFILES.values())
         print(f"Loaded {len(PROFILES)} profiles: {names}")
-    feed_module.init_csvs()
     yield
 
 
 app = FastAPI(title="Hai MVP", lifespan=lifespan)
+
+
+# ─── Per-user identity dependency ─────────────────────────────────────────────
+
+def current_user(x_hai_user: str | None = Header(default=None)) -> str:
+    """Resolve the per-user namespace from the X-Hai-User header (client uuid)."""
+    if not x_hai_user or len(x_hai_user) < 8:
+        raise HTTPException(status_code=400, detail="Missing or invalid user identity.")
+    # Keep it filesystem-safe.
+    return "".join(c for c in x_hai_user if c.isalnum() or c in "-_")[:64]
+
+
+class GateRequest(BaseModel):
+    code: str
+    display_name: str = ""
+
+
+@app.post("/gate")
+def gate(body: GateRequest, user_id: str = Depends(current_user)) -> dict[str, bool]:
+    """Validate the shared access passphrase and register the tester's display name."""
+    if ACCESS_CODE and body.code.strip() != ACCESS_CODE:
+        raise HTTPException(status_code=403, detail="Wrong access code.")
+    feed_module.init_csvs(user_id)
+    if body.display_name.strip():
+        state_module.set_display_name(user_id, body.display_name.strip()[:60])
+    return {"ok": True}
+
+
+@app.get("/gate/required")
+def gate_required() -> dict[str, bool]:
+    return {"required": bool(ACCESS_CODE)}
 
 
 # ─── Static files ─────────────────────────────────────────────────────────────
@@ -57,18 +94,18 @@ def index():
 # ─── Personas ─────────────────────────────────────────────────────────────────
 
 @app.get("/personas", response_model=list[PersonaSummary])
-def list_personas():
+def list_personas(user_id: str = Depends(current_user)):
     summaries = []
     for profile_id, profile in PROFILES.items():
-        s = state_module.load_state(profile_id)
+        s = state_module.load_state(profile_id, user_id)
         summaries.append(state_module.get_persona_summary(profile, s))
     return summaries
 
 
 @app.get("/personas/{persona_id}")
-def get_persona(persona_id: str) -> dict[str, Any]:
+def get_persona(persona_id: str, user_id: str = Depends(current_user)) -> dict[str, Any]:
     profile = _get_profile(persona_id)
-    s = state_module.load_state(persona_id)
+    s = state_module.load_state(persona_id, user_id)
     return {
         "profile": profile.model_dump(),
         "state": s.model_dump(),
@@ -76,25 +113,53 @@ def get_persona(persona_id: str) -> dict[str, Any]:
 
 
 @app.get("/personas/{persona_id}/chat")
-def get_chat(persona_id: str) -> list[dict]:
+def get_chat(persona_id: str, user_id: str = Depends(current_user)) -> list[dict]:
     _get_profile(persona_id)
-    s = state_module.load_state(persona_id)
+    s = state_module.load_state(persona_id, user_id)
     return [m.model_dump() for m in s.short_buffer]
 
 
+@app.get("/personas/{persona_id}/inner")
+def get_inner_world(persona_id: str, user_id: str = Depends(current_user)) -> dict[str, Any]:
+    """Trimmed, display-ready view of the persona's evolving inner state."""
+    _get_profile(persona_id)
+    s = state_module.load_state(persona_id, user_id)
+    # Group recent events by cycle (most recent first).
+    events_by_cycle: dict[int, list[dict]] = {}
+    for e in s.event_log:
+        events_by_cycle.setdefault(e.cycle, []).append({"text": e.text, "salience": e.salience})
+    recent_life = [
+        {"cycle": c, "events": events_by_cycle[c]}
+        for c in sorted(events_by_cycle, reverse=True)
+    ][:5]
+    ranked_mem = sorted(s.user_memory, key=lambda m: m.salience, reverse=True)
+    return {
+        "cycle_count": s.cycle_count,
+        "mood": s.mood,
+        "mood_history": [m.model_dump() for m in s.mood_history[-7:]],
+        "preoccupations": s.preoccupations,
+        "user_memory": [m.model_dump() for m in ranked_mem],
+        "open_threads": [t.model_dump() for t in s.open_threads if t.status == "open"],
+        "journal": s.journal,
+        "recent_life": recent_life,
+    }
+
+
 @app.post("/personas/{persona_id}/message", response_model=SendMessageResponse)
-def send_message(persona_id: str, body: SendMessageRequest):
+def send_message(persona_id: str, body: SendMessageRequest, user_id: str = Depends(current_user)):
     profile = _get_profile(persona_id)
-    s = state_module.load_state(persona_id)
+    _check_quota(user_id)
+    s = state_module.load_state(persona_id, user_id)
 
     # Append user message to buffer first
-    s = state_module.append_to_buffer(s, "user", body.text)
+    s = state_module.append_to_buffer(s, "user", body.text, user_id=user_id)
 
     # Get persona reply
     reply_text, delay_bucket = llm_module.reply(profile, s, body.text)
+    usage_module.record_call(user_id)
 
     # Append persona reply
-    s = state_module.append_to_buffer(s, "persona", reply_text, delay_bucket)
+    s = state_module.append_to_buffer(s, "persona", reply_text, delay_bucket, user_id=user_id)
 
     from datetime import datetime, timezone
     reply_ts = datetime.now(timezone.utc).isoformat()
@@ -107,31 +172,48 @@ def send_message(persona_id: str, body: SendMessageRequest):
 
 
 @app.post("/personas/{persona_id}/cycle")
-def advance_cycle(persona_id: str) -> dict[str, Any]:
+def advance_cycle(persona_id: str, user_id: str = Depends(current_user)) -> dict[str, Any]:
     profile = _get_profile(persona_id)
-    s = state_module.load_state(persona_id)
+    _check_quota(user_id)
+    s = state_module.load_state(persona_id, user_id)
 
     result: RunCycleResponse = llm_module.run_cycle(profile, s)
+    usage_module.record_call(user_id)
+    new_cycle = s.cycle_count + 1
 
-    # Update runtime state
-    from app.models import RecentEvent
-    new_events = [RecentEvent(cycle=s.cycle_count + 1, text=e) for e in result.events]
+    # Stamp every event/fact/thread with this cycle (the model may omit/guess it).
+    for e in result.events:
+        e.cycle = new_cycle
+    for f in result.salient_user_facts:
+        if not f.cycle_added:
+            f.cycle_added = new_cycle
+    for t in result.open_threads:
+        if not t.cycle_added:
+            t.cycle_added = new_cycle
+
+    # Merge into layered memory (accumulate, don't overwrite).
     updated = s.model_copy(update={
-        "cycle_count": s.cycle_count + 1,
+        "cycle_count": new_cycle,
         "mood": result.mood,
         "journal": result.journal,
-        "recent_events": new_events,
     })
-    state_module.save_state(updated)
+    updated = state_module.append_events(updated, new_cycle, result.events)
+    updated = state_module.append_mood(updated, new_cycle, result.mood)
+    updated = state_module.merge_user_memory(updated, result.salient_user_facts)
+    updated = state_module.set_preoccupations(updated, result.preoccupations)
+    updated = state_module.set_open_threads(updated, result.open_threads)
+    state_module.save_state(updated, user_id)
 
     post_id = None
     if result.post:
-        post_id = feed_module.append_post(persona_id, updated.cycle_count, result.post)
+        post_id = feed_module.append_post(persona_id, updated.cycle_count, result.post, user_id)
 
     return {
         "cycle_count": updated.cycle_count,
-        "events": result.events,
+        "events": [e.text for e in result.events],
         "mood": result.mood,
+        "preoccupations": result.preoccupations,
+        "new_user_facts": [f.text for f in result.salient_user_facts],
         "post": result.post,
         "post_id": post_id,
     }
@@ -140,29 +222,62 @@ def advance_cycle(persona_id: str) -> dict[str, Any]:
 # ─── Feed ─────────────────────────────────────────────────────────────────────
 
 @app.get("/feed", response_model=list[FeedPost])
-def get_all_feed():
-    return feed_module.get_feed()
+def get_all_feed(user_id: str = Depends(current_user)):
+    return feed_module.get_feed(user_id=user_id)
 
 
 @app.get("/feed/{persona_id}", response_model=list[FeedPost])
-def get_persona_feed(persona_id: str):
+def get_persona_feed(persona_id: str, user_id: str = Depends(current_user)):
     _get_profile(persona_id)
-    return feed_module.get_feed(persona_id)
+    return feed_module.get_feed(persona_id, user_id=user_id)
 
 
 # ─── Reactions ────────────────────────────────────────────────────────────────
 
 @app.post("/reactions")
-def add_reaction(body: ReactionRequest) -> dict[str, str]:
+def add_reaction(body: ReactionRequest, user_id: str = Depends(current_user)) -> dict[str, str]:
     reaction_id = feed_module.append_reaction(
-        body.post_id, body.persona_id, body.reaction_type, body.reaction_value
+        body.post_id, body.persona_id, body.reaction_type, body.reaction_value, user_id
     )
     return {"reaction_id": reaction_id}
 
 
 @app.get("/reactions/{post_id}")
-def get_post_reactions(post_id: str) -> list[dict]:
-    return feed_module.get_reactions(post_id)
+def get_post_reactions(post_id: str, user_id: str = Depends(current_user)) -> list[dict]:
+    return feed_module.get_reactions(post_id, user_id)
+
+
+# ─── Feedback (Milestone B) ───────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    persona_id: str
+    kind: str                 # "reply" | "session"
+    target_ref: str = ""      # e.g. the reply text snippet being rated
+    rating: str = ""          # "up" | "down" | ""
+    signal_tag: str = ""      # "alive" | "consistent" | "stale" | ""
+    comment: str = ""
+
+
+@app.post("/feedback")
+def add_feedback(body: FeedbackRequest, user_id: str = Depends(current_user)) -> dict[str, str]:
+    fid = feed_module.append_feedback(
+        user_id, body.persona_id, body.kind, body.target_ref,
+        body.rating, body.signal_tag, body.comment,
+    )
+    return {"feedback_id": fid}
+
+
+@app.get("/admin/feedback")
+def export_feedback(code: str = "") -> Any:
+    """All testers' feedback, gated by the access code (for collecting results)."""
+    if not ACCESS_CODE or code != ACCESS_CODE:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+    rows = feed_module.all_feedback()
+    # Attach display names.
+    names = {uid: state_module.get_display_name(uid) for uid in {r["user_id"] for r in rows}}
+    for r in rows:
+        r["display_name"] = names.get(r["user_id"], r["user_id"])
+    return rows
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -171,3 +286,12 @@ def _get_profile(persona_id: str) -> DigitalProfile:
     if persona_id not in PROFILES:
         raise HTTPException(status_code=404, detail=f"Persona not found: {persona_id}")
     return PROFILES[persona_id]
+
+
+def _check_quota(user_id: str) -> None:
+    if not usage_module.under_cap(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="You've reached today's usage limit for this shared preview. "
+                   "Please try again tomorrow.",
+        )

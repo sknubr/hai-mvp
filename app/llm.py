@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import time
 from typing import Any
 
 from app.models import (
@@ -24,13 +25,12 @@ def _get_provider() -> str:
     return os.getenv("LLM_PROVIDER", "anthropic").lower()
 
 
-def _call_anthropic(system: str, user: str, temperature: float = 0.85, max_tokens: int = 2048) -> str:
+def _call_anthropic(system: str, user: str, temperature: float, max_tokens: int, model_name: str) -> str:
     import anthropic  # type: ignore
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     message = client.messages.create(
-        model=model,
+        model=model_name,
         max_tokens=max_tokens,
         temperature=temperature,
         system=system,
@@ -39,30 +39,126 @@ def _call_anthropic(system: str, user: str, temperature: float = 0.85, max_token
     return message.content[0].text
 
 
-def _call_google(system: str, user: str, temperature: float = 0.85, max_tokens: int = 2048) -> str:
-    import google.generativeai as genai  # type: ignore
+def _call_google(system: str, user: str, temperature: float, max_tokens: int, model_name: str) -> str:
+    from google import genai  # type: ignore
+    from google.genai import types  # type: ignore
 
-    model_name = os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-    model = genai.GenerativeModel(
-        model_name=model_name,
-        system_instruction=system,
-        generation_config=genai.GenerationConfig(
+    client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+
+    # Gemma models don't accept a separate system role — fold it into the prompt.
+    is_gemma = "gemma" in model_name.lower()
+    if is_gemma:
+        contents = f"{system}\n\n---\n\n{user}"
+        config_kwargs = dict(temperature=temperature, max_output_tokens=max_tokens)
+    else:
+        contents = user
+        config_kwargs = dict(
+            system_instruction=system,
             temperature=temperature,
             max_output_tokens=max_tokens,
-        ),
+        )
+        # 2.5+/3.x models spend output-token budget on "thinking"; disable it so
+        # the full response (often JSON) is not truncated.
+        if "2.5" in model_name or "-3" in model_name or "3." in model_name:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=types.GenerateContentConfig(**config_kwargs),
     )
-    response = model.generate_content(user)
-    return response.text
+    text = response.text
+    if text is None:
+        raise RuntimeError(
+            f"Google model {model_name} returned no text (finish_reason="
+            f"{response.candidates[0].finish_reason if response.candidates else 'unknown'})"
+        )
+    return text
+
+
+# Transient error signatures worth retrying (rate limit / temporary unavailability).
+_TRANSIENT_MARKERS = ("429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "overloaded", "high demand")
+_MAX_RETRIES = 5
+_MAX_WAIT = 35.0  # cap so a single request can't hang indefinitely
+
+
+def _is_transient(err: Exception) -> bool:
+    msg = str(err)
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
+
+
+def _suggested_delay(err: Exception) -> float | None:
+    """Extract the provider's suggested retryDelay (e.g. 'retryDelay': '26s') if present."""
+    import re
+    m = re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s", str(err))
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _model_chain() -> list[str]:
+    """Primary model + comma-separated fallbacks (rolled to on transient exhaustion)."""
+    provider = _get_provider()
+    if provider == "anthropic":
+        primary = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+        fallbacks = os.getenv("ANTHROPIC_MODEL_FALLBACKS", "")
+    else:
+        primary = os.getenv("GOOGLE_MODEL", "gemini-3.1-flash-lite")
+        fallbacks = os.getenv("GOOGLE_MODEL_FALLBACKS", "")
+    chain = [primary] + [m.strip() for m in fallbacks.split(",") if m.strip()]
+    # De-dup while preserving order
+    seen, out = set(), []
+    for m in chain:
+        if m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _attempt_with_retries(fn, system, user, temperature, max_tokens, model_name) -> str:
+    """Call one model, retrying transient errors (honoring suggested retryDelay).
+    Re-raises the last error if all retries are exhausted (caller may fall back)."""
+    last_err: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return fn(system, user, temperature, max_tokens, model_name)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if not _is_transient(e) or attempt == _MAX_RETRIES - 1:
+                raise
+            suggested = _suggested_delay(e)
+            if suggested is not None:
+                wait = min(suggested + random.uniform(0.5, 1.5), _MAX_WAIT)
+            else:
+                wait = min((2 ** attempt) + 1 + random.uniform(0, 1.5), _MAX_WAIT)
+            print(f"[llm retry] {model_name}: transient ({str(e)[:50]}...); waiting {wait:.1f}s "
+                  f"(attempt {attempt + 1}/{_MAX_RETRIES})")
+            time.sleep(wait)
+    raise last_err  # type: ignore[misc]
 
 
 def _llm_call(system: str, user: str, temperature: float = 0.85, max_tokens: int = 2048) -> str:
     provider = _get_provider()
     if provider == "anthropic":
-        return _call_anthropic(system, user, temperature, max_tokens)
-    if provider == "google":
-        return _call_google(system, user, temperature, max_tokens)
-    raise ValueError(f"Unknown LLM_PROVIDER: {provider!r}. Use 'anthropic' or 'google'.")
+        fn = _call_anthropic
+    elif provider == "google":
+        fn = _call_google
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER: {provider!r}. Use 'anthropic' or 'google'.")
+
+    chain = _model_chain()
+    last_err: Exception | None = None
+    for i, model_name in enumerate(chain):
+        try:
+            return _attempt_with_retries(fn, system, user, temperature, max_tokens, model_name)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            # Only roll to the next model on transient exhaustion; surface real errors.
+            if _is_transient(e) and i < len(chain) - 1:
+                print(f"[llm fallback] {model_name} exhausted; falling back to {chain[i + 1]}")
+                continue
+            raise
+    raise last_err  # type: ignore[misc]
 
 
 def _parse_json_with_retry(raw: str, system: str, user: str, temperature: float) -> Any:
@@ -113,8 +209,30 @@ def run_cycle(
     Returns a RunCycleResponse (events, journal, mood, optional post).
     """
     system, user = build_run_cycle_prompt(profile, state)
-    raw = _llm_call(system, user, temperature=0.90, max_tokens=2048)
+    raw = _llm_call(system, user, temperature=0.90, max_tokens=3072)
     data = _parse_json_with_retry(raw, system, user, temperature=0.90)
+    next_cycle = state.cycle_count + 1
+
+    # Tolerate the model returning events/facts/threads as bare strings.
+    if isinstance(data, dict):
+        evs = data.get("events")
+        if isinstance(evs, list):
+            data["events"] = [
+                {"cycle": next_cycle, "text": e, "salience": 3} if isinstance(e, str) else e
+                for e in evs
+            ]
+        facts = data.get("salient_user_facts")
+        if isinstance(facts, list):
+            data["salient_user_facts"] = [
+                {"text": f, "cycle_added": next_cycle, "salience": 3} if isinstance(f, str) else f
+                for f in facts
+            ]
+        threads = data.get("open_threads")
+        if isinstance(threads, list):
+            data["open_threads"] = [
+                {"text": t, "status": "open", "cycle_added": next_cycle} if isinstance(t, str) else t
+                for t in threads
+            ]
     return RunCycleResponse.model_validate(data)
 
 

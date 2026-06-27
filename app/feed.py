@@ -1,5 +1,11 @@
 """
-Append-only CSV I/O for feed.csv and reactions.csv.
+Per-user append-only CSV I/O for feed, reactions, and feedback.
+
+Everything is namespaced by user_id so testers don't share state:
+  data/feed/{user_id}/feed.csv
+  data/feed/{user_id}/reactions.csv
+  data/feedback/{user_id}.csv
+user_id defaults to "local" for the single-user dev flow and test scripts.
 """
 from __future__ import annotations
 
@@ -12,11 +18,26 @@ from pathlib import Path
 from app.models import FeedPost
 
 DATA_DIR = Path(__file__).parent.parent / "data"
-FEED_CSV = DATA_DIR / "feed.csv"
-REACTIONS_CSV = DATA_DIR / "reactions.csv"
+FEED_DIR = DATA_DIR / "feed"
+FEEDBACK_DIR = DATA_DIR / "feedback"
+DEFAULT_USER = "local"
 
 FEED_HEADERS = ["post_id", "persona_id", "cycle", "timestamp", "post_text"]
 REACTIONS_HEADERS = ["reaction_id", "post_id", "persona_id", "reaction_type", "reaction_value", "timestamp"]
+FEEDBACK_HEADERS = ["feedback_id", "user_id", "persona_id", "kind", "target_ref",
+                    "rating", "signal_tag", "comment", "timestamp"]
+
+
+def _feed_csv(user_id: str) -> Path:
+    return FEED_DIR / user_id / "feed.csv"
+
+
+def _reactions_csv(user_id: str) -> Path:
+    return FEED_DIR / user_id / "reactions.csv"
+
+
+def _feedback_csv(user_id: str) -> Path:
+    return FEEDBACK_DIR / f"{user_id}.csv"
 
 
 def _ensure_csv(path: Path, headers: list[str]) -> None:
@@ -27,34 +48,41 @@ def _ensure_csv(path: Path, headers: list[str]) -> None:
             writer.writerow(headers)
 
 
-def init_csvs() -> None:
-    _ensure_csv(FEED_CSV, FEED_HEADERS)
-    _ensure_csv(REACTIONS_CSV, REACTIONS_HEADERS)
+def init_csvs(user_id: str = DEFAULT_USER) -> None:
+    _ensure_csv(_feed_csv(user_id), FEED_HEADERS)
+    _ensure_csv(_reactions_csv(user_id), REACTIONS_HEADERS)
+    _ensure_csv(_feedback_csv(user_id), FEEDBACK_HEADERS)
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def append_post(persona_id: str, cycle: int, post_text: str) -> str:
-    post_id = str(uuid.uuid4())
-    _ensure_csv(FEED_CSV, FEED_HEADERS)
-    with open(FEED_CSV, "a", newline="") as f:
+def _append_row(path: Path, headers: list[str], row: list) -> None:
+    _ensure_csv(path, headers)
+    with open(path, "a", newline="") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            writer = csv.writer(f)
-            writer.writerow([post_id, persona_id, cycle, _now_iso(), post_text])
+            csv.writer(f).writerow(row)
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
+
+
+# ─── Feed ─────────────────────────────────────────────────────────────────────
+
+def append_post(persona_id: str, cycle: int, post_text: str, user_id: str = DEFAULT_USER) -> str:
+    post_id = str(uuid.uuid4())
+    _append_row(_feed_csv(user_id), FEED_HEADERS,
+                [post_id, persona_id, cycle, _now_iso(), post_text])
     return post_id
 
 
-def get_feed(persona_id: str | None = None) -> list[FeedPost]:
-    _ensure_csv(FEED_CSV, FEED_HEADERS)
+def get_feed(persona_id: str | None = None, user_id: str = DEFAULT_USER) -> list[FeedPost]:
+    path = _feed_csv(user_id)
+    _ensure_csv(path, FEED_HEADERS)
     posts: list[FeedPost] = []
-    with open(FEED_CSV, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
             if persona_id and row["persona_id"] != persona_id:
                 continue
             posts.append(FeedPost(
@@ -67,25 +95,40 @@ def get_feed(persona_id: str | None = None) -> list[FeedPost]:
     return list(reversed(posts))
 
 
-def append_reaction(post_id: str, persona_id: str, reaction_type: str, reaction_value: str) -> str:
+# ─── Reactions ────────────────────────────────────────────────────────────────
+
+def append_reaction(post_id: str, persona_id: str, reaction_type: str,
+                    reaction_value: str, user_id: str = DEFAULT_USER) -> str:
     reaction_id = str(uuid.uuid4())
-    _ensure_csv(REACTIONS_CSV, REACTIONS_HEADERS)
-    with open(REACTIONS_CSV, "a", newline="") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            writer = csv.writer(f)
-            writer.writerow([reaction_id, post_id, persona_id, reaction_type, reaction_value, _now_iso()])
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+    _append_row(_reactions_csv(user_id), REACTIONS_HEADERS,
+                [reaction_id, post_id, persona_id, reaction_type, reaction_value, _now_iso()])
     return reaction_id
 
 
-def get_reactions(post_id: str) -> list[dict]:
-    _ensure_csv(REACTIONS_CSV, REACTIONS_HEADERS)
-    results = []
-    with open(REACTIONS_CSV, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["post_id"] == post_id:
-                results.append(dict(row))
-    return results
+def get_reactions(post_id: str, user_id: str = DEFAULT_USER) -> list[dict]:
+    path = _reactions_csv(user_id)
+    _ensure_csv(path, REACTIONS_HEADERS)
+    with open(path, newline="") as f:
+        return [dict(row) for row in csv.DictReader(f) if row["post_id"] == post_id]
+
+
+# ─── Feedback (Milestone B) ───────────────────────────────────────────────────
+
+def append_feedback(user_id: str, persona_id: str, kind: str, target_ref: str,
+                    rating: str, signal_tag: str, comment: str) -> str:
+    feedback_id = str(uuid.uuid4())
+    _append_row(_feedback_csv(user_id), FEEDBACK_HEADERS,
+                [feedback_id, user_id, persona_id, kind, target_ref,
+                 rating, signal_tag, comment, _now_iso()])
+    return feedback_id
+
+
+def all_feedback() -> list[dict]:
+    """Every user's feedback rows, for the admin export."""
+    rows: list[dict] = []
+    if not FEEDBACK_DIR.exists():
+        return rows
+    for path in sorted(FEEDBACK_DIR.glob("*.csv")):
+        with open(path, newline="") as f:
+            rows.extend(dict(r) for r in csv.DictReader(f))
+    return rows

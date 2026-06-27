@@ -1,0 +1,26 @@
+# Render deploy blueprint. Render → New → Blueprint → point at this repo.
+# A persistent disk is required so per-user state survives redeploys
+# (disks need a paid instance type — Starter is fine for a small preview).
+services:
+  - type: web
+    name: hai-preview
+    runtime: docker
+    plan: starter
+    healthCheckPath: /gate/required
+    disk:
+      name: hai-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false          # set in the Render dashboard (secret)
+      - key: HAI_ACCESS_CODE
+        sync: false          # the shared passphrase you give testers
+      - key: LLM_PROVIDER
+        value: google
+      - key: GOOGLE_MODEL
+        value: gemini-3.1-flash-lite
+      - key: GOOGLE_MODEL_FALLBACKS
+        value: gemini-3-flash-preview,gemma-4-31b-it
+      - key: HAI_DAILY_CALL_CAP
+        value: "80"
