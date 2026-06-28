@@ -32,7 +32,9 @@ from app.models import (
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
-ACCESS_CODE = os.getenv("HAI_ACCESS_CODE", "")  # empty = no gate (local dev)
+# empty = no gate (local dev). Normalize: tolerate stray quotes/whitespace/CRLF that
+# editors or systemd EnvironmentFile parsing can leave on the value.
+ACCESS_CODE = os.getenv("HAI_ACCESS_CODE", "").strip().strip('"').strip("'").strip()
 
 # Module-level profile cache — loaded at startup, never mutated at runtime
 PROFILES: dict[str, DigitalProfile] = {}

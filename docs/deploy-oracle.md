@@ -251,6 +251,34 @@ A simple cron backup (daily at 03:00):
 
 ---
 
+## Troubleshooting: access code rejected (but works locally/Render)
+
+The gate appears but no code is accepted. The value of `HAI_ACCESS_CODE` the running
+process sees differs from what you type — usually stray quotes, a trailing space, or a
+`\r` from CRLF line endings that systemd took literally from `.env`, or the service
+wasn't restarted after editing `.env`.
+
+```bash
+# 1. See the EXACT value the live process has (cat -A reveals ^M / $ / quotes)
+sudo cat /proc/$(pgrep -f 'uvicorn app.main' | head -1)/environ | tr '\0' '\n' \
+  | grep HAI_ACCESS_CODE | cat -A
+
+# 2. Check the raw .env line — must be exactly  HAI_ACCESS_CODE=hai-f1preview$
+grep HAI_ACCESS_CODE /opt/hai/.env | cat -A
+
+# 3. Make sure systemd isn't ALSO setting it elsewhere (stray Environment= line)
+sudo systemctl show hai -p Environment
+
+# 4. Strip any CRLF, then reload (systemd reads .env only at restart)
+sed -i 's/\r$//' /opt/hai/.env
+sudo systemctl restart hai
+```
+
+Note: systemd injects `EnvironmentFile` vars into the process, and the app's
+`load_dotenv()` runs with `override=False`, so the systemd-parsed value wins — `.env`
+is the single source of truth, but only after a restart. (The app now also strips
+quotes/whitespace from the value defensively, so a clean restart should resolve it.)
+
 ## Optional hardening (later)
 
 - `ufw` as a friendlier front-end to the firewall rules.
