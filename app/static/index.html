@@ -1101,15 +1101,6 @@
       </div>`);
     }
 
-    // What it remembers about you
-    if (d.user_memory && d.user_memory.length) {
-      sections.push(`<div class="iw-section">
-        <h4>What they remember about you</h4>
-        <div class="iw-list">${d.user_memory.map(m =>
-          `<div class="iw-item">${escHtml(m.text)} <span class="sal">·s${m.salience}</span></div>`).join('')}</div>
-      </div>`);
-    }
-
     // Open threads
     if (d.open_threads && d.open_threads.length) {
       sections.push(`<div class="iw-section">
@@ -1119,14 +1110,32 @@
       </div>`);
     }
 
-    // Recent life
-    if (d.recent_life && d.recent_life.length) {
-      const days = d.recent_life.map(day => `
-        <div class="iw-day">
-          <div class="iw-day-label">Day ${day.cycle}</div>
-          ${day.events.map(e => `<div class="iw-event">• ${escHtml(e.text)}</div>`).join('')}
-        </div>`).join('');
-      sections.push(`<div class="iw-section"><h4>Recent life</h4>${days}</div>`);
+    // Short-term memory (prose)
+    if (d.short_term_summary) {
+      sections.push(`<div class="iw-section">
+        <h4>The last few days</h4>
+        <div class="iw-journal">${escHtml(d.short_term_summary)}</div>
+      </div>`);
+    }
+
+    // Memory store, by tier (long-term → short-term → working)
+    const c = d.memory_counts || {};
+    const tiers = [
+      ['long_term', 'Long-term memory', c.long_term || 0],
+      ['short_term', 'Short-term memory', c.short_term || 0],
+      ['working', 'Working memory', c.working || 0],
+    ];
+    const byTier = d.memory_by_tier || {};
+    for (const [key, label, count] of tiers) {
+      const items = byTier[key] || [];
+      if (!items.length) continue;
+      sections.push(`<div class="iw-section">
+        <h4>${label} <span class="sal">·${count}</span></h4>
+        <div class="iw-list">${items.map(m => {
+          const fresh = m.reinforce_count ? ` <span class="sal">·↻${m.reinforce_count}</span>` : '';
+          return `<div class="iw-item">${escHtml(m.content)} <span class="sal">·${escHtml(m.tag)} s${m.salience}</span>${fresh}</div>`;
+        }).join('')}</div>
+      </div>`);
     }
 
     // Journal

@@ -23,15 +23,26 @@ services:
     #   mountPath: /app/data
     #   sizeGB: 1
     envVars:
-      - key: GOOGLE_API_KEY
-        sync: false          # set in the Render dashboard (secret)
-      - key: HAI_ACCESS_CODE
-        sync: false          # the shared passphrase you give testers
+      # ── LLM provider ──────────────────────────────────────────────────────
+      # Default is google. For the tester round, z.ai's glm-4.7-flash is
+      # unlimited (no rate-limit/truncation risk) — to use it, set LLM_PROVIDER
+      # to "zai" here and add ZAI_API_KEY in the dashboard. The corporate-proxy
+      # TLS issue is local-only; on Render (Linux) z.ai uses the standard CA.
       - key: LLM_PROVIDER
         value: google
+      # Provider secrets — set whichever you use in the Render dashboard.
+      - key: GOOGLE_API_KEY
+        sync: false          # set in the Render dashboard (secret)
+      - key: ZAI_API_KEY
+        sync: false          # set in the dashboard if LLM_PROVIDER=zai
+      - key: HAI_ACCESS_CODE
+        sync: false          # the shared passphrase you give testers
+      # Model config (used per the active provider)
       - key: GOOGLE_MODEL
         value: gemini-3.1-flash-lite
       - key: GOOGLE_MODEL_FALLBACKS
         value: gemini-3-flash-preview,gemma-4-31b-it
+      - key: ZAI_MODEL
+        value: glm-4.7-flash
       - key: HAI_DAILY_CALL_CAP
         value: "80"

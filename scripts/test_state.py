@@ -94,7 +94,8 @@ def main():
     print(f"  [ok] dedup + salience cap at {USER_MEMORY_CAP}")
 
     print("\n── Test 8: Backward-compat load of old state shape ──")
-    old_path = STATE_DIR / f"runtime-{first_id}.json"
+    old_path = STATE_DIR / "local" / f"runtime-{first_id}.json"
+    old_path.parent.mkdir(parents=True, exist_ok=True)
     old_path.write_text('{"persona_id": "%s", "cycle_count": 2, "mood": "old", '
                         '"journal": "j", "recent_events": [{"cycle": 1, "text": "x"}], '
                         '"short_buffer": []}' % first_id)

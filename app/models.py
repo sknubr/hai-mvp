@@ -216,7 +216,37 @@ class RecentEvent(BaseModel):
     text: str
 
 
-# ─── Layered memory (M1) ──────────────────────────────────────────────────────
+# ─── Unified memory model (per PRDs/memory-model-design.md) ────────────────────
+
+MemoryTier = Literal["working", "short_term", "long_term"]
+MemoryTag = Literal["verified", "observed", "inferred", "stale"]   # PRD §7 trust signal
+MemorySource = Literal["conversation", "external_event", "feedback"]  # PRD §2
+
+
+class Memory(BaseModel):
+    """A single discrete memory item. Salience (0–100) is an LLM-assigned hint,
+    never a per-tick computation: set at write/consolidation, bumped only on recall."""
+    id: str
+    tier: MemoryTier = "working"
+    content: str
+    salience: int = Field(50, ge=0, le=100)   # PRD §6 bands
+    tag: MemoryTag = "observed"
+    source: MemorySource = "conversation"
+    cycle_written: int = 0
+    created_at: str = ""
+    last_recalled_at: Optional[str] = None     # PRD §6 reinforcement stamp
+    reinforce_count: int = 0
+
+
+class MemoryStore(BaseModel):
+    """The per-(user, persona) memory file. Long-term prose summary lives in
+    RuntimeState.journal (reused, not duplicated here)."""
+    persona_id: str
+    items: list[Memory] = []
+    short_term_summary: str = ""               # PRD §8 short-term prose
+
+
+# ─── Layered memory (M1 — being converged into Memory above) ───────────────────
 
 class EventEntry(BaseModel):
     """The persona's own episodic life — accumulates in event_log."""
@@ -251,10 +281,12 @@ class RuntimeState(BaseModel):
     journal: str = ""
     short_buffer: list[BufferMessage] = []
     # Layered memory (M1)
-    event_log: list[EventEntry] = []        # persona's accumulating episodic life
     preoccupations: list[str] = []          # current top-of-mind, evolves/resolves
-    user_memory: list[MemoryItem] = []      # long-term memory of the user
     open_threads: list[ThreadItem] = []     # follow-ups
+    # DEPRECATED — converged into the unified Memory store (app/memory.py).
+    # Retained so old state files still parse; no longer written.
+    event_log: list[EventEntry] = []        # was: persona's accumulating episodic life
+    user_memory: list[MemoryItem] = []      # was: long-term memory of the user
     mood_history: list[MoodEntry] = []
     # Deprecated — retained for backward-compat parsing only.
     recent_events: list[RecentEvent] = []
@@ -262,14 +294,28 @@ class RuntimeState(BaseModel):
 
 # ─── LLM Response Models ──────────────────────────────────────────────────────
 
+class MemoryDraft(BaseModel):
+    """A memory item as emitted by the LLM during consolidation — no id/timestamps
+    yet (memory.py assigns those). Tolerant defaults so partial JSON still parses."""
+    content: str
+    salience: int = Field(50, ge=0, le=100)
+    tag: MemoryTag = "observed"
+    source: MemorySource = "conversation"
+
+
 class RunCycleResponse(BaseModel):
     events: list[EventEntry] = Field(..., min_length=3, max_length=5)
-    journal: str
+    journal: str                                    # long-term prose summary
     mood: str
     preoccupations: list[str] = []
     open_threads: list[ThreadItem] = []
-    salient_user_facts: list[MemoryItem] = []
     post: LooseStr = None
+    # Consolidation ("sleep") output — folded into the single runCycle call.
+    new_memories: list[MemoryDraft] = []            # created from this cycle's conversation/events
+    consolidated_memory: list[MemoryDraft] = []     # surviving short-term set after keep/merge/drop/re-tag
+    short_term_summary: str = ""                     # rewritten short-term prose
+    # DEPRECATED — superseded by new_memories; kept for back-compat parsing.
+    salient_user_facts: list[MemoryItem] = []
 
 
 # ─── API Models ───────────────────────────────────────────────────────────────

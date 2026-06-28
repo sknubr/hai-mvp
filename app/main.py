@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app import feed as feed_module
 from app import llm as llm_module
+from app import memory as memory_module
 from app import state as state_module
 from app import usage as usage_module
 from app.models import (
@@ -153,24 +154,24 @@ def get_inner_world(persona_id: str, user_id: str = Depends(current_user)) -> di
     """Trimmed, display-ready view of the persona's evolving inner state."""
     _get_profile(persona_id)
     s = state_module.load_state(persona_id, user_id)
-    # Group recent events by cycle (most recent first).
-    events_by_cycle: dict[int, list[dict]] = {}
-    for e in s.event_log:
-        events_by_cycle.setdefault(e.cycle, []).append({"text": e.text, "salience": e.salience})
-    recent_life = [
-        {"cycle": c, "events": events_by_cycle[c]}
-        for c in sorted(events_by_cycle, reverse=True)
-    ][:5]
-    ranked_mem = sorted(s.user_memory, key=lambda m: m.salience, reverse=True)
+    store = memory_module.load_store(persona_id, user_id)
+    # Top memory items per tier, salience-ranked (for the inner-world drawer).
+    by_tier: dict[str, list[dict]] = {"working": [], "short_term": [], "long_term": []}
+    for m in sorted(store.items, key=lambda m: m.salience, reverse=True):
+        by_tier.setdefault(m.tier, []).append({
+            "content": m.content, "salience": m.salience, "tag": m.tag,
+            "source": m.source, "reinforce_count": m.reinforce_count,
+        })
     return {
         "cycle_count": s.cycle_count,
         "mood": s.mood,
         "mood_history": [m.model_dump() for m in s.mood_history[-7:]],
         "preoccupations": s.preoccupations,
-        "user_memory": [m.model_dump() for m in ranked_mem],
         "open_threads": [t.model_dump() for t in s.open_threads if t.status == "open"],
         "journal": s.journal,
-        "recent_life": recent_life,
+        "short_term_summary": store.short_term_summary,
+        "memory_counts": memory_module.tier_counts(store),
+        "memory_by_tier": by_tier,
     }
 
 
@@ -183,8 +184,17 @@ def send_message(persona_id: str, body: SendMessageRequest, user_id: str = Depen
     # Append user message to buffer first
     s = state_module.append_to_buffer(s, "user", body.text, user_id=user_id)
 
+    # Recall (PRD §9): surface relevant memories, then reinforce them (PRD §6).
+    store = memory_module.load_store(persona_id, user_id)
+    recalled = memory_module.select_relevant(store, body.text, s.cycle_count)
+    if recalled:
+        store = memory_module.reinforce(store, recalled)
+        memory_module.save_store(store, user_id)
+
     # Get persona reply
-    reply_text, delay_bucket = llm_module.reply(profile, s, body.text)
+    reply_text, delay_bucket = llm_module.reply(
+        profile, s, body.text, recalled=recalled, short_term_summary=store.short_term_summary
+    )
     usage_module.record_call(user_id)
 
     # Append persona reply
@@ -205,33 +215,50 @@ def advance_cycle(persona_id: str, user_id: str = Depends(current_user)) -> dict
     profile = _get_profile(persona_id)
     _check_quota(user_id)
     s = state_module.load_state(persona_id, user_id)
+    store = memory_module.load_store(persona_id, user_id)
 
-    result: RunCycleResponse = llm_module.run_cycle(profile, s)
+    result: RunCycleResponse = llm_module.run_cycle(profile, s, store)
     usage_module.record_call(user_id)
     new_cycle = s.cycle_count + 1
 
-    # Stamp every event/fact/thread with this cycle (the model may omit/guess it).
+    # Stamp every event/thread with this cycle (the model may omit/guess it).
     for e in result.events:
         e.cycle = new_cycle
-    for f in result.salient_user_facts:
-        if not f.cycle_added:
-            f.cycle_added = new_cycle
     for t in result.open_threads:
         if not t.cycle_added:
             t.cycle_added = new_cycle
 
-    # Merge into layered memory (accumulate, don't overwrite).
+    # Update runtime state (mood/journal/preoccupations/threads). event_log and
+    # user_memory are deprecated — memory now lives in the unified store.
     updated = s.model_copy(update={
         "cycle_count": new_cycle,
         "mood": result.mood,
         "journal": result.journal,
     })
-    updated = state_module.append_events(updated, new_cycle, result.events)
     updated = state_module.append_mood(updated, new_cycle, result.mood)
-    updated = state_module.merge_user_memory(updated, result.salient_user_facts)
     updated = state_module.set_preoccupations(updated, result.preoccupations)
     updated = state_module.set_open_threads(updated, result.open_threads)
     state_module.save_state(updated, user_id)
+
+    # Consolidate memory ("sleep"). Bridge from events/facts if the model used the
+    # older output shape so the store still populates.
+    from app.models import MemoryDraft
+    new_drafts = list(result.new_memories)
+    if not new_drafts:
+        new_drafts = [
+            MemoryDraft(content=e.text, salience=min(100, e.salience * 20),
+                        tag="observed", source="external_event")
+            for e in result.events if e.salience >= 4
+        ] + [
+            MemoryDraft(content=f.text, salience=min(100, f.salience * 20),
+                        tag="verified", source="conversation")
+            for f in result.salient_user_facts
+        ]
+    store = memory_module.consolidate(
+        store, new_drafts, list(result.consolidated_memory),
+        result.short_term_summary, new_cycle,
+    )
+    memory_module.save_store(store, user_id)
 
     post_id = None
     if result.post:
@@ -242,7 +269,8 @@ def advance_cycle(persona_id: str, user_id: str = Depends(current_user)) -> dict
         "events": [e.text for e in result.events],
         "mood": result.mood,
         "preoccupations": result.preoccupations,
-        "new_user_facts": [f.text for f in result.salient_user_facts],
+        "new_memories": [d.content for d in new_drafts],
+        "memory_counts": memory_module.tier_counts(store),
         "post": result.post,
         "post_id": post_id,
     }

@@ -10,6 +10,16 @@ import random
 import time
 from typing import Any
 
+# Verify TLS against the OS trust store rather than only certifi. This makes
+# HTTPS work behind corporate TLS-inspecting proxies (e.g. SealSuite SWG on
+# managed machines), whose private root CA lives in the OS keychain but not in
+# certifi. No-op on hosts where the standard CA bundle already suffices.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:  # pragma: no cover - falls back to certifi
+    pass
+
 from app.models import (
     DELAY_BUCKETS,
     DelayBucket,
@@ -37,6 +47,36 @@ def _call_anthropic(system: str, user: str, temperature: float, max_tokens: int,
         messages=[{"role": "user", "content": user}],
     )
     return message.content[0].text
+
+
+def _call_zai(system: str, user: str, temperature: float, max_tokens: int, model_name: str) -> str:
+    """z.ai (Zhipu) via its OpenAI-compatible endpoint."""
+    from openai import OpenAI  # type: ignore
+
+    client = OpenAI(
+        api_key=os.environ["ZAI_API_KEY"],
+        base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
+    )
+    kwargs: dict = dict(
+        model=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    # GLM-4.5+ "think" by default, which can eat the token budget and truncate JSON.
+    # Disable it (mirrors the Gemini thinking_budget=0 fix).
+    if any(v in model_name for v in ("4.5", "4.6", "4.7", "4.8")):
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+    resp = client.chat.completions.create(**kwargs)
+    text = resp.choices[0].message.content
+    if text is None:
+        raise RuntimeError(f"z.ai model {model_name} returned no text (finish_reason="
+                           f"{resp.choices[0].finish_reason})")
+    return text
 
 
 def _call_google(system: str, user: str, temperature: float, max_tokens: int, model_name: str) -> str:
@@ -102,6 +142,9 @@ def _model_chain() -> list[str]:
     if provider == "anthropic":
         primary = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         fallbacks = os.getenv("ANTHROPIC_MODEL_FALLBACKS", "")
+    elif provider == "zai":
+        primary = os.getenv("ZAI_MODEL", "glm-4.7-flash")
+        fallbacks = os.getenv("ZAI_MODEL_FALLBACKS", "")
     else:
         primary = os.getenv("GOOGLE_MODEL", "gemini-3.1-flash-lite")
         fallbacks = os.getenv("GOOGLE_MODEL_FALLBACKS", "")
@@ -143,8 +186,10 @@ def _llm_call(system: str, user: str, temperature: float = 0.85, max_tokens: int
         fn = _call_anthropic
     elif provider == "google":
         fn = _call_google
+    elif provider == "zai":
+        fn = _call_zai
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {provider!r}. Use 'anthropic' or 'google'.")
+        raise ValueError(f"Unknown LLM_PROVIDER: {provider!r}. Use 'anthropic', 'google', or 'zai'.")
 
     chain = _model_chain()
     last_err: Exception | None = None
@@ -170,7 +215,7 @@ def _parse_json_with_retry(raw: str, system: str, user: str, temperature: float)
         cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     try:
-        return json.loads(cleaned)
+        return json.loads(cleaned, strict=False)
     except json.JSONDecodeError:
         # One retry: ask the model to fix its own output
         fix_system = "Fix the following invalid JSON and return only valid JSON, no markdown fences."
@@ -180,7 +225,7 @@ def _parse_json_with_retry(raw: str, system: str, user: str, temperature: float)
         if cleaned2.startswith("```"):
             lines2 = cleaned2.split("\n")
             cleaned2 = "\n".join(lines2[1:-1] if lines2[-1].strip() == "```" else lines2[1:])
-        return json.loads(cleaned2)
+        return json.loads(cleaned2, strict=False)
 
 
 # ─── Public LLM operations ────────────────────────────────────────────────────
@@ -189,12 +234,16 @@ def reply(
     profile: DigitalProfile,
     state: RuntimeState,
     user_message: str,
+    recalled: list | None = None,
+    short_term_summary: str = "",
 ) -> tuple[str, DelayBucket]:
     """
     Generate a persona reply to a user message.
+    `recalled` are the memory items surfaced for this turn (PRD §9); they are
+    rendered into the prompt and reinforced by the caller.
     Returns (reply_text, delay_bucket).
     """
-    system, user = build_reply_prompt(profile, state, user_message)
+    system, user = build_reply_prompt(profile, state, user_message, recalled, short_term_summary)
     text = _llm_call(system, user, temperature=0.85, max_tokens=1024)
     bucket: DelayBucket = random.choice(DELAY_BUCKETS)
     return text.strip(), bucket
@@ -203,17 +252,20 @@ def reply(
 def run_cycle(
     profile: DigitalProfile,
     state: RuntimeState,
+    store=None,
 ) -> RunCycleResponse:
     """
-    Advance the persona one notional day.
-    Returns a RunCycleResponse (events, journal, mood, optional post).
+    Advance the persona one notional day AND consolidate memory ("sleep") in a
+    single call. `store` supplies the current memory items to consolidate.
+    Returns a RunCycleResponse.
     """
-    system, user = build_run_cycle_prompt(profile, state)
-    raw = _llm_call(system, user, temperature=0.90, max_tokens=3072)
+    system, user = build_run_cycle_prompt(profile, state, store)
+    # Larger payload now (events + journal + memory consolidation) — give it room.
+    raw = _llm_call(system, user, temperature=0.90, max_tokens=4096)
     data = _parse_json_with_retry(raw, system, user, temperature=0.90)
     next_cycle = state.cycle_count + 1
 
-    # Tolerate the model returning events/facts/threads as bare strings.
+    # Tolerate the model returning events/facts/threads/memories as bare strings.
     if isinstance(data, dict):
         evs = data.get("events")
         if isinstance(evs, list):
@@ -233,6 +285,14 @@ def run_cycle(
                 {"text": t, "status": "open", "cycle_added": next_cycle} if isinstance(t, str) else t
                 for t in threads
             ]
+        for key in ("new_memories", "consolidated_memory"):
+            mems = data.get(key)
+            if isinstance(mems, list):
+                data[key] = [
+                    {"content": m, "salience": 50, "tag": "observed", "source": "conversation"}
+                    if isinstance(m, str) else m
+                    for m in mems
+                ]
     return RunCycleResponse.model_validate(data)
 
 
