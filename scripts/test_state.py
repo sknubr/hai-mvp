@@ -103,6 +103,23 @@ def main():
     assert reloaded.cycle_count == 2 and reloaded.event_log == [], "old state should load with empty new fields"
     print("  [ok] legacy state file loads; new fields default empty")
 
+    print("\n── Test 9: Full transcript persists beyond the 15-msg buffer ──")
+    from app.state import load_transcript, _transcript_path, SHORT_BUFFER_SIZE
+    tuser = "transcript_test_user"
+    s2 = RuntimeState(persona_id=first_id)
+    for i in range(20):
+        role = "user" if i % 2 == 0 else "persona"
+        s2 = append_to_buffer(s2, role, f"msg {i}", user_id=tuser)
+    assert len(s2.short_buffer) == SHORT_BUFFER_SIZE, f"buffer not capped: {len(s2.short_buffer)}"
+    transcript = load_transcript(first_id, tuser)
+    assert len(transcript) == 20, f"transcript should keep all 20, got {len(transcript)}"
+    assert transcript[0].text == "msg 0" and transcript[-1].text == "msg 19", "transcript order wrong"
+    # Persists across reload
+    assert len(load_transcript(first_id, tuser)) == 20, "transcript did not persist"
+    import shutil
+    shutil.rmtree(STATE_DIR / tuser, ignore_errors=True)
+    print("  [ok] buffer capped at 15 while full 20-msg transcript persists in order")
+
     # Reset state for clean slate
     save_state(RuntimeState(persona_id=first_id))
     print("\nAll tests passed. State reset to clean slate.")

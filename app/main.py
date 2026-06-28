@@ -13,9 +13,11 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app import delays as delays_module
 from app import feed as feed_module
 from app import llm as llm_module
 from app import memory as memory_module
+from app import schedule as schedule_module
 from app import state as state_module
 from app import usage as usage_module
 from app.models import (
@@ -27,6 +29,7 @@ from app.models import (
     ReactionRequest,
     RunCycleResponse,
     RuntimeState,
+    ScheduledReply,
     SendMessageRequest,
     SendMessageResponse,
 )
@@ -49,7 +52,18 @@ async def lifespan(app: FastAPI):
     else:
         names = ", ".join(p.name for p in PROFILES.values())
         print(f"Loaded {len(PROFILES)} profiles: {names}")
-    yield
+    # Background scheduler delivers delayed ("async") persona replies when due.
+    # Single asyncio task — run uvicorn with ONE worker so it isn't duplicated.
+    import asyncio
+    scheduler_task = asyncio.create_task(schedule_module.scheduler_loop(PROFILES))
+    try:
+        yield
+    finally:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Hai MVP", lifespan=lifespan)
@@ -146,9 +160,42 @@ def get_persona(persona_id: str, user_id: str = Depends(current_user)) -> dict[s
 
 @app.get("/personas/{persona_id}/chat")
 def get_chat(persona_id: str, user_id: str = Depends(current_user)) -> list[dict]:
+    """Full conversation history (last ~200). Falls back to the working buffer for
+    users created before transcripts existed."""
     _get_profile(persona_id)
-    s = state_module.load_state(persona_id, user_id)
-    return [m.model_dump() for m in s.short_buffer]
+    transcript = state_module.load_transcript(persona_id, user_id)
+    if not transcript:
+        s = state_module.load_state(persona_id, user_id)
+        transcript = s.short_buffer
+    return [m.model_dump() for m in transcript[-200:]]
+
+
+@app.get("/inbox")
+def get_inbox(user_id: str = Depends(current_user)) -> list[dict[str, Any]]:
+    """Per-persona delivery status for client polling: the timestamp of the latest
+    persona message + whether a delayed reply is pending and when it's due. Lets the
+    UI surface freshly-delivered async replies and notify across personas."""
+    out: list[dict[str, Any]] = []
+    for persona_id in PROFILES:
+        s = state_module.load_state(persona_id, user_id)
+        last_persona_ts = ""
+        last_persona_text = ""
+        for m in reversed(s.short_buffer):
+            if m.role == "persona":
+                last_persona_ts = m.ts
+                last_persona_text = m.text[:140]
+                break
+        pending = [j for j in schedule_module.load_queue(persona_id, user_id) if j.status == "pending"]
+        next_due = min((j.due_ts for j in pending), default="")
+        out.append({
+            "persona_id": persona_id,
+            "name": PROFILES[persona_id].name,
+            "last_persona_ts": last_persona_ts,
+            "last_persona_text": last_persona_text,
+            "pending": bool(pending),
+            "next_due_ts": next_due,
+        })
+    return out
 
 
 @app.get("/personas/{persona_id}/inner")
@@ -183,32 +230,41 @@ def send_message(persona_id: str, body: SendMessageRequest, user_id: str = Depen
     _check_quota(user_id)
     s = state_module.load_state(persona_id, user_id)
 
-    # Append user message to buffer first
+    # Append user message to buffer first (shows immediately in the chat).
     s = state_module.append_to_buffer(s, "user", body.text, user_id=user_id)
 
-    # Recall (PRD §9): surface relevant memories, then reinforce them (PRD §6).
-    store = memory_module.load_store(persona_id, user_id)
-    recalled = memory_module.select_relevant(store, body.text, s.cycle_count)
-    if recalled:
-        store = memory_module.reinforce(store, recalled)
-        memory_module.save_store(store, user_id)
-
-    # Get persona reply
-    reply_text, delay_bucket = llm_module.reply(
-        profile, s, body.text, recalled=recalled, short_term_summary=store.short_term_summary
-    )
-    usage_module.record_call(user_id)
-
-    # Append persona reply
-    s = state_module.append_to_buffer(s, "persona", reply_text, delay_bucket, user_id=user_id)
+    # How long does the persona take to reply this time?
+    bucket = delays_module.pick_delay_bucket()
 
     from datetime import datetime, timezone
-    reply_ts = datetime.now(timezone.utc).isoformat()
 
+    if bucket == "immediate":
+        # Synchronous path — generate and return the reply now.
+        reply_text = schedule_module.generate_and_store_reply(
+            profile, persona_id, user_id, body.text, bucket
+        )
+        return SendMessageResponse(
+            status="delivered",
+            reply=reply_text,
+            delay_bucket=bucket,
+            reply_ts=datetime.now(timezone.utc).isoformat(),
+        )
+
+    # Delayed path — enqueue; the scheduler generates + delivers it when due.
+    due = delays_module.due_ts(bucket)
+    schedule_module.enqueue(ScheduledReply(
+        id=schedule_module.new_id(),
+        persona_id=persona_id,
+        user_id=user_id,
+        user_message=body.text,
+        delay_bucket=bucket,
+        created_ts=datetime.now(timezone.utc).isoformat(),
+        due_ts=due,
+    ))
     return SendMessageResponse(
-        reply=reply_text,
-        delay_bucket=delay_bucket,
-        reply_ts=reply_ts,
+        status="scheduled",
+        delay_bucket=bucket,
+        due_ts=due,
     )
 
 

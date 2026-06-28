@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Subagent Execution Rules
+- if sub-agents are needed preferred subagents per task: 1
+- Always ask for explicit user confirmation before spawning any parallel subagents.
+- subagents for generic codebase lookups or research tasks; execute them sequentially unless large benefits to doing so in parallel - in which case please ask. 
+
+
 ## Project status
 
 This repo is in the **PRD / pre-code phase**. All design lives in `PRDs/`. No application code exists yet. When building, follow the sequencing in `PRDs/PRD-persona-loop-mvp.md §12`.

@@ -46,3 +46,6 @@ services:
         value: glm-4.7-flash
       - key: HAI_DAILY_CALL_CAP
         value: "80"
+      # Async delivery timing: "fast" (compressed, for the tester round) or "real".
+      - key: HAI_DELAY_MODE
+        value: fast

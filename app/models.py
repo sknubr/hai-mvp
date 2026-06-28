@@ -324,10 +324,28 @@ class SendMessageRequest(BaseModel):
     text: str
 
 
-class SendMessageResponse(BaseModel):
-    reply: str
+class ScheduledReply(BaseModel):
+    """A persona reply queued for delayed delivery (the async mechanic).
+    Persisted per-(user, persona) and processed by the background scheduler."""
+    id: str
+    persona_id: str
+    user_id: str
+    user_message: str
     delay_bucket: DelayBucket
-    reply_ts: str
+    created_ts: str
+    due_ts: str
+    status: Literal["pending", "delivered", "failed"] = "pending"
+    attempts: int = 0
+
+
+class SendMessageResponse(BaseModel):
+    # "delivered" → reply is present now (immediate bucket).
+    # "scheduled" → persona will reply later; reply is None, due_ts is set.
+    status: Literal["delivered", "scheduled"] = "delivered"
+    reply: Optional[str] = None
+    delay_bucket: DelayBucket
+    reply_ts: Optional[str] = None
+    due_ts: Optional[str] = None
 
 
 class PersonaSummary(BaseModel):

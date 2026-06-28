@@ -26,6 +26,7 @@ PROFILES_DIR = Path(__file__).parent.parent / "profiles"            # built-in, 
 GENERATED_DIR = Path(__file__).parent.parent / "data" / "personas"  # user-generated (writable/persistent)
 STATE_DIR = Path(__file__).parent.parent / "data" / "state"
 SHORT_BUFFER_SIZE = 15
+TRANSCRIPT_CAP = 1000       # full chat history shown to the user (decoupled from the buffer)
 EVENT_LOG_CAP = 40          # older episodic life rolls up into the journal
 USER_MEMORY_CAP = 30        # long-term memory of the user, salience-ranked
 MOOD_HISTORY_CAP = 60
@@ -140,12 +141,41 @@ def append_to_buffer(
     user_id: str = DEFAULT_USER,
 ) -> RuntimeState:
     msg = BufferMessage(role=role, text=text, ts=_now_iso(), delay_bucket=delay_bucket)
+    # Persist to the full transcript (what the user sees) with the SAME message,
+    # then trim the short buffer (the LLM's working window).
+    append_transcript(state.persona_id, user_id, msg)
     buffer = list(state.short_buffer) + [msg]
-    # Trim to last N messages
     buffer = buffer[-SHORT_BUFFER_SIZE:]
     updated = state.model_copy(update={"short_buffer": buffer})
     save_state(updated, user_id)
     return updated
+
+
+# ─── Full chat transcript (decoupled from the short buffer) ───────────────────
+
+def _transcript_path(persona_id: str, user_id: str = DEFAULT_USER) -> Path:
+    return _user_dir(user_id) / f"transcript-{persona_id}.json"
+
+
+def load_transcript(persona_id: str, user_id: str = DEFAULT_USER) -> list[BufferMessage]:
+    path = _transcript_path(persona_id, user_id)
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [BufferMessage.model_validate(m) for m in raw]
+
+
+def append_transcript(persona_id: str, user_id: str, msg: BufferMessage) -> None:
+    msgs = load_transcript(persona_id, user_id)
+    msgs.append(msg)
+    msgs = msgs[-TRANSCRIPT_CAP:]
+    path = _transcript_path(persona_id, user_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps([m.model_dump() for m in msgs], indent=2))
+    os.replace(tmp, path)
 
 
 # ─── Layered memory helpers (M1) ──────────────────────────────────────────────

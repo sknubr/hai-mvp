@@ -248,6 +248,13 @@ A simple cron backup (daily at 03:00):
 - [ ] uvicorn bound to `127.0.0.1`, not `0.0.0.0` — keep it behind Caddy.
 - [ ] Oracle may email about reclaiming **idle** Always Free compute. A1 instances
       are less affected; light real usage + the daily backup cron keeps it active.
+- [ ] **Run uvicorn with ONE worker** (the default in `hai.service`). The async-reply
+      scheduler is a single in-process asyncio task; multiple workers would each run it
+      and deliver duplicate replies. Don't add `--workers N` to the systemd `ExecStart`.
+- [ ] Async delivery: set `HAI_DELAY_MODE=fast` in `/opt/hai/.env` for the tester round
+      (compressed delays so testers see replies land in a sitting), `real` for true hours.
+      Queued replies live on disk (`data/state/<uid>/queue-*.json`) and survive a restart —
+      past-due ones deliver on the next tick — but won't fire while the service is stopped.
 
 ---
 

@@ -60,7 +60,9 @@ def main():
                 state = append_to_buffer(state, "user", user_input)
 
             print(f"\n{profile.name}: ", end="", flush=True)
-            reply_text, delay_bucket = reply(profile, state, user_input)
+            from app.delays import pick_delay_bucket
+            reply_text = reply(profile, state, user_input)
+            delay_bucket = pick_delay_bucket()
             print(reply_text)
             print(f"  [delay: {delay_bucket}]\n")
 

@@ -21,8 +21,6 @@ except Exception:  # pragma: no cover - falls back to certifi
     pass
 
 from app.models import (
-    DELAY_BUCKETS,
-    DelayBucket,
     DigitalProfile,
     RunCycleResponse,
     RuntimeState,
@@ -236,17 +234,16 @@ def reply(
     user_message: str,
     recalled: list | None = None,
     short_term_summary: str = "",
-) -> tuple[str, DelayBucket]:
+) -> str:
     """
     Generate a persona reply to a user message.
     `recalled` are the memory items surfaced for this turn (PRD §9); they are
     rendered into the prompt and reinforced by the caller.
-    Returns (reply_text, delay_bucket).
+    Returns the reply text. (The delay bucket is chosen separately in app.delays.)
     """
     system, user = build_reply_prompt(profile, state, user_message, recalled, short_term_summary)
     text = _llm_call(system, user, temperature=0.85, max_tokens=1024)
-    bucket: DelayBucket = random.choice(DELAY_BUCKETS)
-    return text.strip(), bucket
+    return text.strip()
 
 
 def run_cycle(

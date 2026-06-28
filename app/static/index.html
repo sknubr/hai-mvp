@@ -199,6 +199,23 @@
 
   .persona .delay-badge { align-self: flex-start; }
 
+  .msg-time {
+    font-size: 10px;
+    color: var(--text-dim, #888);
+    opacity: 0.6;
+    padding: 1px 4px;
+  }
+  .user .msg-time { align-self: flex-end; }
+  .persona .msg-time { align-self: flex-start; }
+  .delivered-receipt {
+    font-size: 11px;
+    color: var(--text-dim, #888);
+    opacity: 0.6;
+    align-self: flex-end;
+    padding: 1px 4px;
+  }
+  .unread-dot { color: var(--accent); font-size: 9px; vertical-align: middle; }
+
   .typing-indicator {
     display: none;
     align-items: center;
@@ -806,9 +823,63 @@
       if (personas.length > 0) {
         await selectPersona(personas[0].profile_id);
       }
+      await initInbox();        // baseline + start polling for async deliveries
+      maybeRequestNotifications();
     } catch (e) {
       console.error('Init failed:', e);
     }
+  }
+
+  // ── Async delivery: inbox polling + notifications ───────────────────────────
+  let inboxSeen = {};   // persona_id -> last persona-message ts we've shown
+  let unread = {};      // persona_id -> true (badge)
+  let pollTimer = null;
+
+  function maybeRequestNotifications() {
+    try {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    } catch (e) { /* notifications unsupported — polling still works */ }
+  }
+
+  async function initInbox() {
+    // Establish a baseline so we don't notify for pre-existing messages.
+    try {
+      const rows = await hfetch('/inbox').then(r => r.json());
+      rows.forEach(r => { inboxSeen[r.persona_id] = r.last_persona_ts || ''; });
+    } catch (e) { /* ignore */ }
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollInbox, 8000);
+  }
+
+  async function pollInbox() {
+    let rows;
+    try {
+      rows = await hfetch('/inbox').then(r => r.json());
+    } catch (e) { return; }
+    for (const r of rows) {
+      const seen = inboxSeen[r.persona_id] || '';
+      if (r.last_persona_ts && r.last_persona_ts > seen) {
+        inboxSeen[r.persona_id] = r.last_persona_ts;
+        if (r.persona_id === activePersonaId && !document.hidden) {
+          await loadChat();   // re-render replaces any pending placeholder
+        } else {
+          unread[r.persona_id] = true;
+          renderTabs();
+          notify(r.name || 'Hai', r.last_persona_text || 'New message', r.persona_id);
+        }
+      }
+    }
+  }
+
+  function notify(title, body, personaId) {
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const n = new Notification(title, { body, tag: 'hai-' + personaId });
+        n.onclick = () => { window.focus(); selectPersona(personaId); n.close(); };
+      }
+    } catch (e) { /* ignore */ }
   }
 
   // ── Access gate ──────────────────────────────────────────────────────────────
@@ -841,7 +912,7 @@
     const container = document.getElementById('persona-tabs');
     const tabs = personas.map(p => `
       <button class="tab ${p.profile_id === activePersonaId ? 'active' : ''}"
-              onclick="selectPersona('${p.profile_id}')">${escHtml(p.name)}</button>
+              onclick="selectPersona('${p.profile_id}')">${escHtml(p.name)}${unread[p.profile_id] ? ' <span class="unread-dot">●</span>' : ''}</button>
     `).join('');
     const newBtn = `<button class="tab" title="Create a new companion" onclick="openOnboarding()">+ New</button>`;
     container.innerHTML = tabs + newBtn;
@@ -849,6 +920,7 @@
 
   async function selectPersona(personaId) {
     activePersonaId = personaId;
+    unread[personaId] = false;   // clear the badge when you open the chat
     renderTabs();
 
     // Update persona bar
@@ -874,6 +946,11 @@
     if (!activePersonaId) return;
     const msgs = await hfetch(`/personas/${activePersonaId}/chat`).then(r => r.json());
     renderMessages(msgs);
+    // Sync the seen-baseline to the latest persona message so the poller won't
+    // re-notify for what's already on screen.
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'persona') { inboxSeen[activePersonaId] = msgs[i].ts; break; }
+    }
   }
 
   function renderMessages(msgs) {
@@ -886,7 +963,7 @@
     container.innerHTML = msgs.map(m => `
       <div class="message-row ${m.role}">
         <div class="bubble">${escHtml(m.text)}</div>
-        ${m.role === 'persona' ? `<div class="delay-badge">⏱ ${m.delay_bucket}</div>` : ''}
+        ${m.ts ? `<div class="msg-time">${escHtml(fmtTime(m.ts))}</div>` : ''}
       </div>
     `).join('');
     container.scrollTop = container.scrollHeight;
@@ -902,8 +979,34 @@
     row.className = `message-row ${role}`;
     row.innerHTML = `
       <div class="bubble">${escHtml(text)}</div>
-      ${role === 'persona' ? `<div class="delay-badge">⏱ ${delayBucket}</div>` : ''}
+      <div class="msg-time">${escHtml(fmtTime(new Date().toISOString()))}</div>
     `;
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  // Subtle timestamp like a real chat app: today → "9:42 PM", older → "Jun 27".
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d)) return '';
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    return sameDay
+      ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
+  // A quiet "Delivered" receipt under the user's message when the persona will
+  // reply later. Client-only — replaced when loadChat re-renders after delivery.
+  function appendDeliveredReceipt() {
+    const container = document.getElementById('messages');
+    const empty = container.querySelector('.empty');
+    if (empty) empty.remove();
+    const row = document.createElement('div');
+    row.className = 'message-row user';
+    row.dataset.receipt = '1';
+    row.innerHTML = `<div class="delivered-receipt">Delivered</div>`;
     container.appendChild(row);
     container.scrollTop = container.scrollHeight;
   }
@@ -957,9 +1060,17 @@
         console.error('message failed:', detail);
       } else {
         const data = await res.json();
-        appendMessage('persona', data.reply, data.delay_bucket);
-        lastReplyText = data.reply;
-        showReplyFeedback(data.reply);
+        if (data.status === 'scheduled') {
+          // Persona will reply later — show a pending placeholder; the poller
+          // swaps it for the real reply when the scheduler delivers it.
+          appendDeliveredReceipt();
+        } else {
+          appendMessage('persona', data.reply, data.delay_bucket);
+          lastReplyText = data.reply;
+          showReplyFeedback(data.reply);
+          // Keep our "seen" baseline current so the poller doesn't double-notify.
+          inboxSeen[activePersonaId] = data.reply_ts || inboxSeen[activePersonaId];
+        }
       }
     } catch (e) {
       removeTyping();
