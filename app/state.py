@@ -139,8 +139,10 @@ def append_to_buffer(
     text: str,
     delay_bucket: DelayBucket = "immediate",
     user_id: str = DEFAULT_USER,
+    initiated_by: str = "user",
 ) -> RuntimeState:
-    msg = BufferMessage(role=role, text=text, ts=_now_iso(), delay_bucket=delay_bucket)
+    msg = BufferMessage(role=role, text=text, ts=_now_iso(), delay_bucket=delay_bucket,
+                        initiated_by=initiated_by)
     # Persist to the full transcript (what the user sees) with the SAME message,
     # then trim the short buffer (the LLM's working window).
     append_transcript(state.persona_id, user_id, msg)

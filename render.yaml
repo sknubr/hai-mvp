@@ -49,3 +49,8 @@ services:
       # Async delivery timing: "fast" (compressed, for the tester round) or "real".
       - key: HAI_DELAY_MODE
         value: fast
+      # Character-initiated messaging (unprompted reach-outs). GENTLE defaults.
+      - key: HAI_INITIATION_ENABLED
+        value: "1"
+      - key: HAI_INITIATION_MAX_PER_DAY
+        value: "1"

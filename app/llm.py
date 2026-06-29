@@ -22,10 +22,11 @@ except Exception:  # pragma: no cover - falls back to certifi
 
 from app.models import (
     DigitalProfile,
+    InitiationResponse,
     RunCycleResponse,
     RuntimeState,
 )
-from app.prompts import build_reply_prompt, build_run_cycle_prompt
+from app.prompts import build_initiation_prompt, build_reply_prompt, build_run_cycle_prompt
 
 # ─── Provider abstraction ─────────────────────────────────────────────────────
 
@@ -291,6 +292,26 @@ def run_cycle(
                     for m in mems
                 ]
     return RunCycleResponse.model_validate(data)
+
+
+def initiate(
+    profile: DigitalProfile,
+    state: RuntimeState,
+    recalled: list | None = None,
+    short_term_summary: str = "",
+    idle_human: str = "a while",
+) -> InitiationResponse:
+    """One-shot judge+write for a character-initiated reach-out (PRD §5): decide
+    whether to text the user first and, if so, write the opener. Returns an
+    InitiationResponse (reach_out defaults False on any shape surprise)."""
+    system, user = build_initiation_prompt(
+        profile, state, recalled, short_term_summary, idle_human
+    )
+    raw = _llm_call(system, user, temperature=0.9, max_tokens=512)
+    data = _parse_json_with_retry(raw, system, user, temperature=0.9)
+    if not isinstance(data, dict):
+        return InitiationResponse(reach_out=False, reason="unparseable response")
+    return InitiationResponse.model_validate(data)
 
 
 def generate_persona(system: str, user: str) -> str:

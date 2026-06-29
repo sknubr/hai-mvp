@@ -867,7 +867,9 @@
         } else {
           unread[r.persona_id] = true;
           renderTabs();
-          notify(r.name || 'Hai', r.last_persona_text || 'New message', r.persona_id);
+          const who = r.name || 'Hai';
+          const title = r.last_initiated_by === 'character' ? `${who} messaged you` : who;
+          notify(title, r.last_persona_text || 'New message', r.persona_id);
         }
       }
     }
@@ -960,12 +962,17 @@
       container.innerHTML = '<div class="empty" id="chat-empty">Select a persona and start chatting, or advance a day to seed their journal.</div>';
       return;
     }
-    container.innerHTML = msgs.map(m => `
+    container.innerHTML = msgs.map(m => {
+      const reachedOut = m.role === 'persona' && m.initiated_by === 'character';
+      const meta = reachedOut
+        ? `<div class="msg-time">${escHtml(fmtTime(m.ts))} · reached out</div>`
+        : (m.ts ? `<div class="msg-time">${escHtml(fmtTime(m.ts))}</div>` : '');
+      return `
       <div class="message-row ${m.role}">
         <div class="bubble">${escHtml(m.text)}</div>
-        ${m.ts ? `<div class="msg-time">${escHtml(fmtTime(m.ts))}</div>` : ''}
-      </div>
-    `).join('');
+        ${meta}
+      </div>`;
+    }).join('');
     container.scrollTop = container.scrollHeight;
   }
 

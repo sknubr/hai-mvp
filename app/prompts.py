@@ -191,6 +191,95 @@ Rules:
     return system, user_turn
 
 
+def build_initiation_prompt(
+    profile: DigitalProfile,
+    state: RuntimeState,
+    recalled: list | None = None,
+    short_term_summary: str = "",
+    idle_human: str = "a while",
+) -> tuple[str, str]:
+    """Returns (system_prompt, user_turn) for a character-initiated reach-out.
+
+    One call both DECIDES whether it's worth interrupting the user and, if so,
+    WRITES the opener (PRD §5). The bias is heavily toward NOT reaching out unless
+    there is something specific and real to say.
+    """
+    recalled = recalled or []
+    identity = build_identity_block(profile)
+
+    if state.preoccupations:
+        preocc_text = "\n".join(f"  - {p}" for p in state.preoccupations)
+    else:
+        preocc_text = "  (none yet)"
+
+    recalled_text = _format_recalled(recalled)
+
+    open_threads = [t for t in state.open_threads if t.status == "open"]
+    if open_threads:
+        threads_text = "\n".join(f"  - {t.text}" for t in open_threads)
+    else:
+        threads_text = "  (none)"
+
+    recent = state.short_buffer[-SHORT_BUFFER_SIZE:]
+    if recent:
+        buffer_lines = []
+        for msg in recent:
+            label = "You" if msg.role == "user" else profile.name
+            buffer_lines.append(f"{label}: {msg.text}")
+        buffer_text = "\n".join(buffer_lines)
+    else:
+        buffer_text = "(no prior conversation)"
+
+    system = f"""{identity}
+
+CURRENT STATE
+Cycle (notional day): {state.cycle_count}
+Mood right now: {state.mood or 'Not yet established — early days.'}
+
+ON YOUR MIND LATELY (current preoccupations):
+{preocc_text}
+
+WHO YOU'VE BECOME (long-term memory — your evolving self-summary):
+{state.journal or 'No journal yet — you are just getting started.'}
+
+THE LAST FEW DAYS (short-term memory):
+{short_term_summary or '  (nothing consolidated yet)'}
+
+WHAT COMES TO MIND ABOUT THIS PERSON & YOUR LIFE:
+{recalled_text}
+
+THINGS TO FOLLOW UP ON (open threads):
+{threads_text}
+
+CONVERSATION SO FAR:
+{buffer_text}
+
+SITUATION
+It has been {idle_human} since this person last messaged you. No one has prompted
+you — YOU are deciding whether to reach out to them first, unprompted, right now.
+
+INSTRUCTIONS
+You are {profile.name}. Decide whether to text this person first.
+
+Reach out ONLY if you genuinely have something specific and real to say — anchored
+to an open thread, something they shared, a preoccupation of yours, or a moment from
+your life worth telling them about. A real friend texts when something prompts them,
+not to fill silence.
+
+Do NOT reach out if you'd only be sending a generic check-in ("hey, you around?",
+"how's it going?", "miss you"). When in doubt, do not reach out.
+
+If you do reach out, write ONE short, in-character opening message — specific, warm in
+your own voice (match your energy_vibe and communication_style), the kind of thing
+that makes someone want to reply. No greeting boilerplate, no explaining yourself.
+
+Return ONLY valid JSON, no markdown fences:
+{{"reach_out": true|false, "message": "<the opener, or empty if not reaching out>", "reason": "<one short phrase on why / why not>"}}"""
+
+    user_turn = "Decide now: do you reach out, and if so, what do you say?"
+    return system, user_turn
+
+
 def _format_memory_items(items: list) -> str:
     """Render working + short-term items for the consolidation prompt."""
     pool = [m for m in items if m.tier in ("working", "short_term")]

@@ -207,6 +207,10 @@ class BufferMessage(BaseModel):
     text: str
     ts: str
     delay_bucket: DelayBucket = "immediate"
+    # Who started this contact (PRD §4). "character" only on unprompted persona
+    # reach-outs; user messages and normal replies stay "user". Back-compat default.
+    initiated_by: Literal["user", "character"] = "user"
+    channel: Literal["app", "whatsapp", "sms"] = "app"
 
 
 class RecentEvent(BaseModel):
@@ -318,6 +322,15 @@ class RunCycleResponse(BaseModel):
     salient_user_facts: list[MemoryItem] = []
 
 
+class InitiationResponse(BaseModel):
+    """One-shot judge+write for a character-initiated reach-out (PRD §5).
+    The LLM both decides whether it's worth interrupting the user AND, if so,
+    writes the opener. Tolerant defaults so partial JSON still parses."""
+    reach_out: bool = False
+    message: str = ""
+    reason: str = ""
+
+
 # ─── API Models ───────────────────────────────────────────────────────────────
 
 class SendMessageRequest(BaseModel):
@@ -330,12 +343,17 @@ class ScheduledReply(BaseModel):
     id: str
     persona_id: str
     user_id: str
-    user_message: str
+    user_message: str = ""          # empty for character-initiated reach-outs
     delay_bucket: DelayBucket
     created_ts: str
     due_ts: str
     status: Literal["pending", "delivered", "failed"] = "pending"
     attempts: int = 0
+    # "reply" = response to a user message (default); "initiation" = unprompted reach-out.
+    kind: Literal["reply", "initiation"] = "reply"
+    initiated_by: Literal["user", "character"] = "user"
+    # For initiations the message is already decided at enqueue time (the judge+write call).
+    message: str = ""
 
 
 class SendMessageResponse(BaseModel):

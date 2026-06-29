@@ -180,10 +180,12 @@ def get_inbox(user_id: str = Depends(current_user)) -> list[dict[str, Any]]:
         s = state_module.load_state(persona_id, user_id)
         last_persona_ts = ""
         last_persona_text = ""
+        last_initiated_by = "user"
         for m in reversed(s.short_buffer):
             if m.role == "persona":
                 last_persona_ts = m.ts
                 last_persona_text = m.text[:140]
+                last_initiated_by = m.initiated_by
                 break
         pending = [j for j in schedule_module.load_queue(persona_id, user_id) if j.status == "pending"]
         next_due = min((j.due_ts for j in pending), default="")
@@ -192,6 +194,7 @@ def get_inbox(user_id: str = Depends(current_user)) -> list[dict[str, Any]]:
             "name": PROFILES[persona_id].name,
             "last_persona_ts": last_persona_ts,
             "last_persona_text": last_persona_text,
+            "last_initiated_by": last_initiated_by,
             "pending": bool(pending),
             "next_due_ts": next_due,
         })

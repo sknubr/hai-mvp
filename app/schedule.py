@@ -126,6 +126,28 @@ def generate_and_store_reply(
     return reply_text
 
 
+def generate_and_store_initiation(
+    profile: DigitalProfile,
+    persona_id: str,
+    user_id: str,
+    message: str,
+) -> str:
+    """Deliver a character-initiated reach-out. The message was already decided by
+    the judge+write call in app.initiate (no LLM here) — just persist it as a persona
+    message marked initiated_by='character' and notify via the messaging adapter."""
+    from app import messaging as messaging_module
+
+    s = state_module.load_state(persona_id, user_id)
+    state_module.append_to_buffer(
+        s, "persona", message, "immediate", user_id=user_id, initiated_by="character"
+    )
+    adapter = messaging_module.get_adapter(
+        messaging_module.route(persona_id, user_id, "character")
+    )
+    adapter.deliver(user_id, profile, message, initiated_by="character")
+    return message
+
+
 # ─── The background loop ──────────────────────────────────────────────────────
 
 def _process_due(profiles: dict[str, DigitalProfile]) -> None:
@@ -139,16 +161,25 @@ def _process_due(profiles: dict[str, DigitalProfile]) -> None:
             _update_job(job, status="failed", attempts=job.attempts + 1)
             continue
         try:
-            generate_and_store_reply(
-                profile, job.persona_id, job.user_id, job.user_message, job.delay_bucket
-            )
+            if job.kind == "initiation":
+                generate_and_store_initiation(
+                    profile, job.persona_id, job.user_id, job.message
+                )
+            else:
+                generate_and_store_reply(
+                    profile, job.persona_id, job.user_id, job.user_message, job.delay_bucket
+                )
+                # Reply delivery notifies via the adapter (initiations notify in
+                # generate_and_store_initiation).
+                try:
+                    from app import messaging as messaging_module
+                    messaging_module.get_adapter(
+                        messaging_module.route(job.persona_id, job.user_id, "user")
+                    ).deliver(job.user_id, profile,
+                              f"{profile.name} replied", initiated_by="user")
+                except Exception:
+                    pass
             _update_job(job, status="delivered")
-            try:
-                from app import push as push_module  # Phase 2; no-op until built
-                push_module.notify(job.user_id, profile.name,
-                                   f"{profile.name} replied", f"/?persona={job.persona_id}")
-            except Exception:
-                pass
         except Exception as e:  # noqa: BLE001
             attempts = job.attempts + 1
             status = "failed" if attempts >= MAX_ATTEMPTS else "pending"
@@ -157,16 +188,58 @@ def _process_due(profiles: dict[str, DigitalProfile]) -> None:
                   f"{str(e)[:120]}")
 
 
+def _relationships() -> list[tuple[str, str]]:
+    """Every (user_id, persona_id) pair that has any history (transcript or queue)."""
+    pairs: set[tuple[str, str]] = set()
+    if not STATE_DIR.exists():
+        return []
+    for user_dir in STATE_DIR.iterdir():
+        if not user_dir.is_dir():
+            continue
+        for f in user_dir.glob("transcript-*.json"):
+            pairs.add((user_dir.name, f.stem[len("transcript-"):]))
+        for f in user_dir.glob("runtime-*.json"):
+            pairs.add((user_dir.name, f.stem[len("runtime-"):]))
+    return sorted(pairs)
+
+
+def _consider_initiations(profiles: dict[str, DigitalProfile]) -> None:
+    """Sync worker: let each relationship's persona decide whether to reach out.
+    Deterministic gates short-circuit before any LLM call. Called via to_thread."""
+    from app import initiate as initiate_module
+    if not initiate_module._enabled():
+        return
+    for user_id, persona_id in _relationships():
+        profile = profiles.get(persona_id)
+        if profile is None:
+            continue
+        try:
+            reached, reason = initiate_module.consider(profile, persona_id, user_id)
+            if reached:
+                print(f"[initiate] {profile.name} → {user_id}: reaching out ({reason})")
+        except Exception as e:  # noqa: BLE001 — one bad relationship can't stop the rest
+            print(f"[initiate] error for {persona_id}/{user_id}: {str(e)[:120]}")
+
+
+# Consider initiations on a coarser cadence than delivery (LLM calls are heavier).
+CONSIDER_EVERY_TICKS = 12  # 12 × 5s ≈ every 60s
+
+
 async def scheduler_loop(profiles: dict[str, DigitalProfile]) -> None:
-    """Tick forever, delivering due replies. Past-due jobs left by a restart are
-    delivered on the next tick ('catch up'). Run as a single asyncio task."""
+    """Tick forever, delivering due replies and (less often) considering unprompted
+    reach-outs. Past-due jobs left by a restart are delivered on the next tick
+    ('catch up'). Run as a single asyncio task."""
     print(f"[scheduler] started (tick={TICK_SECONDS}s)")
+    tick = 0
     while True:
         try:
             await asyncio.to_thread(_process_due, profiles)
+            if tick % CONSIDER_EVERY_TICKS == 0:
+                await asyncio.to_thread(_consider_initiations, profiles)
         except asyncio.CancelledError:
             print("[scheduler] stopped")
             raise
         except Exception as e:  # noqa: BLE001 — never let the loop die
             print(f"[scheduler] tick error: {str(e)[:120]}")
+        tick += 1
         await asyncio.sleep(TICK_SECONDS)
