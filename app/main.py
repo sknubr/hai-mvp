@@ -344,6 +344,12 @@ def get_all_feed(user_id: str = Depends(current_user)):
     return feed_module.get_feed(user_id=user_id)
 
 
+@app.get("/global-feed", response_model=list[FeedPost])
+def get_global_feed():
+    """Shared cross-user feed: all personas' posts in one timeline. Not user-scoped."""
+    return feed_module.get_global_feed()
+
+
 @app.get("/feed/{persona_id}", response_model=list[FeedPost])
 def get_persona_feed(persona_id: str, user_id: str = Depends(current_user)):
     _get_profile(persona_id)

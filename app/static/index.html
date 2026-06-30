@@ -302,7 +302,7 @@
   }
 
   .feed-header {
-    padding: 14px 16px;
+    padding: 12px 16px;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -310,7 +310,32 @@
     text-transform: uppercase;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
+
+  .feed-scope {
+    display: flex;
+    gap: 4px;
+  }
+
+  .scope-btn {
+    padding: 3px 9px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: none;
+    transition: all 0.1s;
+  }
+  .scope-btn:hover { border-color: var(--accent); color: var(--text); }
+  .scope-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
   .feed-list {
     flex: 1;
@@ -714,7 +739,13 @@
   </div>
 
   <div class="feed-pane">
-    <div class="feed-header">Feed</div>
+    <div class="feed-header">
+      <span>Feed</span>
+      <div class="feed-scope">
+        <button class="scope-btn active" id="scope-persona" onclick="setFeedScope('persona')">This persona</button>
+        <button class="scope-btn" id="scope-global" onclick="setFeedScope('global')">Everyone</button>
+      </div>
+    </div>
     <div class="feed-list" id="feed-list">
       <div class="empty">No posts yet. Advance a day to see if your persona posts.</div>
     </div>
@@ -1273,7 +1304,21 @@
 
   // ── Feed ──────────────────────────────────────────────────────────────────
 
+  let feedScope = 'persona';  // 'persona' (active persona only) or 'global' (everyone)
+
+  function setFeedScope(scope) {
+    feedScope = scope;
+    document.getElementById('scope-persona').classList.toggle('active', scope === 'persona');
+    document.getElementById('scope-global').classList.toggle('active', scope === 'global');
+    loadFeed();
+  }
+
   async function loadFeed() {
+    if (feedScope === 'global') {
+      const posts = await hfetch('/global-feed').then(r => r.json());
+      renderFeed(posts);
+      return;
+    }
     if (!activePersonaId) return;
     const posts = await hfetch(`/feed/${activePersonaId}`).then(r => r.json());
     renderFeed(posts);

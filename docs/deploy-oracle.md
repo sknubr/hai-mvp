@@ -238,6 +238,45 @@ A simple cron backup (daily at 03:00):
 
 ---
 
+## 8. Character-initiated messaging ("the character texts you first")
+
+Personas can reach out **unprompted** — a spontaneous message grounded in their inner
+world (an open thread, a preoccupation, something you shared). It's gated for restraint
+and runs on the **same single-worker scheduler** as async replies (so the ONE-worker rule
+above still applies — multiple workers would double up reach-outs).
+
+How it works: every ~60s the scheduler considers each relationship. Cheap deterministic
+gates run first (and cost nothing); only when they all pass does one LLM call both decide
+*whether* it's worth interrupting and *write* the opener. Approved reach-outs are queued
+like any other delayed message and delivered when due; the in-app inbox poll surfaces them.
+
+### Env knobs (set in `/opt/hai/.env`, then `sudo systemctl restart hai`)
+
+```bash
+HAI_INITIATION_ENABLED=1      # master switch. 0/false = no unprompted reach-outs at all
+# HAI_INITIATION_MODE=        # "fast" or "real"; unset = follows HAI_DELAY_MODE
+HAI_INITIATION_MAX_PER_DAY=1  # daily cap on reach-outs PER (user, persona) relationship
+# HAI_INITIATION_QUIET=       # 1/0 to force quiet hours on/off; unset = on in real, off in fast
+# HAI_TZ_OFFSET=0             # hours from UTC for the 22:00–09:00 quiet window
+```
+
+**GENTLE defaults** (no env needed): never cold-opens (requires prior history *and* at least
+one user message), reaches out only after ≥6h user idle, ≥6h cooldown since the last message,
+quiet hours 22:00–09:00, at most 1/day, never stacks two pending reach-outs, and backs off
+after each decision. In `fast` mode (the tester round) those windows compress to seconds and
+quiet hours are off, so you can watch a reach-out land in a single sitting.
+
+To **disable** entirely for a deploy: `HAI_INITIATION_ENABLED=0` + restart. To **tune frequency**:
+raise `HAI_INITIATION_MAX_PER_DAY` and/or set `HAI_INITIATION_MODE=real` for true-hour pacing.
+Quiet hours use a single server-wide UTC offset (`HAI_TZ_OFFSET`) — per-user timezones are future
+work, so pick the offset matching most testers.
+
+> Limitation today: delivery is app-only (in-app inbox + browser notifications). WhatsApp/SMS
+> and window-aware routing are deferred (PRD §11) — the adapter seam (`app/messaging.py`) is in
+> place so they slot in later without touching the loop.
+
+---
+
 ## Gotchas checklist
 
 - [ ] **Both** firewalls opened (Security List *and* OS `iptables`) — the #1 "why
@@ -255,6 +294,9 @@ A simple cron backup (daily at 03:00):
       (compressed delays so testers see replies land in a sitting), `real` for true hours.
       Queued replies live on disk (`data/state/<uid>/queue-*.json`) and survive a restart —
       past-due ones deliver on the next tick — but won't fire while the service is stopped.
+- [ ] Character-initiated messaging shares that single scheduler (§8). Same ONE-worker rule.
+      Disable with `HAI_INITIATION_ENABLED=0`; tune cadence via `HAI_INITIATION_MAX_PER_DAY`
+      and `HAI_INITIATION_MODE`. Restart after `.env` edits — systemd reads it only at start.
 
 ---
 

@@ -21,6 +21,7 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 FEED_DIR = DATA_DIR / "feed"
 FEEDBACK_DIR = DATA_DIR / "feedback"
 DEFAULT_USER = "local"
+GLOBAL_USER = "_global"  # reserved namespace for the shared cross-user feed
 
 FEED_HEADERS = ["post_id", "persona_id", "cycle", "timestamp", "post_text"]
 REACTIONS_HEADERS = ["reaction_id", "post_id", "persona_id", "reaction_type", "reaction_value", "timestamp"]
@@ -30,6 +31,10 @@ FEEDBACK_HEADERS = ["feedback_id", "user_id", "persona_id", "kind", "target_ref"
 
 def _feed_csv(user_id: str) -> Path:
     return FEED_DIR / user_id / "feed.csv"
+
+
+def _global_feed_csv() -> Path:
+    return FEED_DIR / GLOBAL_USER / "feed.csv"
 
 
 def _reactions_csv(user_id: str) -> Path:
@@ -72,8 +77,12 @@ def _append_row(path: Path, headers: list[str], row: list) -> None:
 
 def append_post(persona_id: str, cycle: int, post_text: str, user_id: str = DEFAULT_USER) -> str:
     post_id = str(uuid.uuid4())
-    _append_row(_feed_csv(user_id), FEED_HEADERS,
-                [post_id, persona_id, cycle, _now_iso(), post_text])
+    ts = _now_iso()
+    row = [post_id, persona_id, cycle, ts, post_text]
+    _append_row(_feed_csv(user_id), FEED_HEADERS, row)
+    # Dual-write to the shared global feed so the post is visible cross-user.
+    # Same post_id + timestamp so the post is identical in both stores.
+    _append_row(_global_feed_csv(), FEED_HEADERS, row)
     return post_id
 
 
@@ -93,6 +102,24 @@ def get_feed(persona_id: str | None = None, user_id: str = DEFAULT_USER) -> list
                 post_text=row["post_text"],
             ))
     return list(reversed(posts))
+
+
+def get_global_feed(limit: int = 200) -> list[FeedPost]:
+    """The shared cross-user feed: all personas' posts, newest first by timestamp."""
+    path = _global_feed_csv()
+    _ensure_csv(path, FEED_HEADERS)
+    posts: list[FeedPost] = []
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            posts.append(FeedPost(
+                post_id=row["post_id"],
+                persona_id=row["persona_id"],
+                cycle=int(row["cycle"]),
+                timestamp=row["timestamp"],
+                post_text=row["post_text"],
+            ))
+    posts.sort(key=lambda p: p.timestamp, reverse=True)
+    return posts[:limit]
 
 
 # ─── Reactions ────────────────────────────────────────────────────────────────
